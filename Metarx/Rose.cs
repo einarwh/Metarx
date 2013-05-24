@@ -26,12 +26,9 @@ namespace Metarx
                     "System", "System.Core", "mscorlib", "System.Runtime"
                 }.Select(MetadataReference.CreateAssemblyReference);
 
-            var foo = new MetadataFileReference(typeof(Observable).Assembly.Location);
+            var obsRef = new MetadataFileReference(typeof(Observable).Assembly.Location);
 
-            //var obsRef = MetadataReference.CreateAssemblyReference(typeof(Observable).Assembly.FullName);
-
-
-            myRefs = myRefs.Union(new [] {foo});
+            myRefs = myRefs.Union(new [] {obsRef});
 
             var compiledCode = Compilation.Create(
                 outputName: dllName,

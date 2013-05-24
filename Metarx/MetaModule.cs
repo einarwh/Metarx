@@ -1,15 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
-using System.Reactive.Subjects;
 using System.Text;
 using System.Threading.Tasks;
-using System.Web;
 
 using Nancy;
-using Nancy.IO;
-using Nancy.ModelBinding;
 
 namespace Metarx
 {
@@ -17,14 +12,10 @@ namespace Metarx
     {
         const int MAX_REQUEST_BODY_LENGTH = 1000000;
 
-        private static int _counter = 0;
-        private static Dictionary<int, dynamic> _programs = new Dictionary<int, dynamic>();
-        private static Dictionary<int, Dictionary<string, IObserver<string>>> _programStreamsMap = new Dictionary<int, Dictionary<string, IObserver<string>>>(); 
-
         static MetaModule()
         {
             Engine.RegisterProgram(inputs => new Rosie().Execute(inputs));
-            Engine.RegisterProgram(inputs => new Program().Execute(inputs));
+            Engine.RegisterProgram(inputs => new SampleProgram().Execute(inputs));
         }
 
         public async Task<object> GetValueFromStream(IObservable<object> stream)
