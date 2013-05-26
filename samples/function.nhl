@@ -1,0 +1,3 @@
+(define (execute stream)
+  (rx-select (lambda (it) (invoke-instance it "get_Item2"))))) 
+)
