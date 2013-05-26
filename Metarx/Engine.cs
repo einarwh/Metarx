@@ -55,7 +55,11 @@ namespace Metarx
         {
             int id = _counter++;
             var q = new Queue<object>();
-            execute(GetProgramInputStream(id)).Subscribe(q.Enqueue);
+            execute(GetProgramInputStream(id)).Subscribe(obj =>
+                {
+                    var x = obj;
+                    q.Enqueue(obj);
+                });
             ResultMap[id] = q;
             return id;
         }

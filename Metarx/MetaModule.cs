@@ -16,6 +16,7 @@ namespace Metarx
         {
             Engine.RegisterProgram(inputs => new Rosie().Execute(inputs));
             Engine.RegisterProgram(inputs => new SampleProgram().Execute(inputs));
+            Engine.RegisterProgram(inputs => new EntryPoint().Execute(inputs));
         }
 
         public async Task<object> GetValueFromStream(IObservable<object> stream)
