@@ -99,15 +99,13 @@
     <Content Include="Web.config" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="DevNihil.cs" />
     <Compile Include="Engine.cs" />
-    <Compile Include="HelloModule.cs" />
-    <Compile Include="Incrementer.cs" />
     <Compile Include="MetaModule.cs" />
-    <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Rose.cs" />
     <Compile Include="Rosie.cs" />
-    <Compile Include="TheMightyQuux.cs" />
+    <Compile Include="SampleProgram.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="packages.config" />

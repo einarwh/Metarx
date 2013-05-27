@@ -30,8 +30,9 @@ namespace Metarx
             var evalResult = (AtomExpression)evaluator.Evaluate(callExp);
             var atom = evalResult.Atom;
             var obs = atom as IObservable<object>;
-            var result = obs.Select(sexp => ((LiteralExpression)sexp).Atom);
-            return result;
+            return obs;
+            //var result = obs.Select(sexp => ((LiteralExpression)sexp).Atom);
+            //return result;
         } 
     }
 
@@ -1430,8 +1431,14 @@ namespace Metarx
 
             var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
 
+            // Unwrap literal.
+            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
+            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
+            
+            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
+
             var bodyExp = Expression.Block(new [] { procScopeVarExp }, 
-                assignProcScopeExp, litExpCtorExp, setCallExp, evalTailCallExp);
+                assignProcScopeExp, litExpCtorExp, setCallExp, atomResultExp);
             return bodyExp;
         }
 
