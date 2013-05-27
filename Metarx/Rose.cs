@@ -52,7 +52,7 @@ namespace Metarx
 
         public static object GetSuitableType(Assembly asm) 
         {
-            var type = asm.GetTypes().First(t => t.GetMethods().Any(m => m.Name == "Execute"));
+            var type = asm.GetTypes().First(t => t.GetMethods().Any(m => m.Name == "Execute") && t.GetConstructors().Any(c => !c.GetParameters().Any()));
             return Activator.CreateInstance(type);
         }
 

@@ -1,0 +1,8 @@
+(define (execute stream)
+  (rx-select 
+    (lambda (s) (invoke-instance s "ToUpper")) 
+    (rx-select 
+      (lambda (t) (invoke-instance t "get_Item2")) 
+      (rx-where
+        (lambda (u) (= "quux" (invoke-instance u "get_Item1")))
+        stream))))

@@ -44,8 +44,8 @@ namespace Metarx
                         var er = new Response { StatusCode = HttpStatusCode.SeeOther };
                         er.Headers["Location"] = url;
                         return er;
-
                     }
+
                     var r = new Response
                         {
                             StatusCode = HttpStatusCode.OK,

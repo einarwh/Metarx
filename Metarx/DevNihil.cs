@@ -31,8 +31,6 @@ namespace Metarx
             var atom = evalResult.Atom;
             var obs = atom as IObservable<object>;
             return obs;
-            //var result = obs.Select(sexp => ((LiteralExpression)sexp).Atom);
-            //return result;
         } 
     }
 
@@ -1183,7 +1181,8 @@ namespace Metarx
         {
             object o1 = ((AtomExpression)env.Get(0)).Atom;
             object o2 = ((AtomExpression)env.Get(1)).Atom;
-            return Compare(o1, o2) ? _true : _false;
+            var result = Compare(o1, o2) ? _true : _false;
+            return result;
         }
 
         public override SExpression CreateFormals(IEnvironment env)
@@ -1197,10 +1196,17 @@ namespace Metarx
             {
                 return Compare((int)o1, (int)o2);
             }
+
             if ((o1 is double || o1 is int) && (o2 is double || o2 is int))
             {
                 return Compare((double)o1, (double)o2);
             }
+
+            if (o1 is string && o2 is string)
+            {
+                return o1.Equals(o2);
+            }
+
             throw new ArgumentException("=: Invalid arguments of types: " + o1.GetType() + " and " + o2.GetType());
         }
 
@@ -1289,6 +1295,7 @@ namespace Metarx
             env.Add("gensym", new GensymProcedure(env));
             env.Add("str", new StringProcedure(env));
             env.Add("rx-select", new RxSelectProcedure(env));
+            env.Add("rx-where", new RxWhereProcedure(env));
             return env;
         }
 
@@ -1392,11 +1399,6 @@ namespace Metarx
             return new LiteralExpression(resultStream);
         }
 
-        private Expression GetFakeBody(ParameterExpression paramExp)
-        {
-            return paramExp;
-        }
-
         private Expression GetRealBody(Procedure proc, ParameterExpression paramExp)
         {
             var currentScopeExp = Expression.Constant(proc.Scope);
@@ -1454,6 +1456,101 @@ namespace Metarx
             return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("s"));
         }
         
+    }
+
+    class RxWhereProcedure : NativeProcedure
+    {
+        private readonly Symbol _falseSymbol;
+
+        public RxWhereProcedure(IEnvironment env)
+            : base(env)
+        {
+            _falseSymbol = env.Symbols.False;
+        }
+
+        public override SExpression Evaluate(IScope evalScope)
+        {
+            var proc = (Procedure)evalScope.Get(0);
+            var stream = GetAtom(evalScope, 1);
+            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
+
+            var paramExp = Expression.Parameter(elemType, "it");
+            var bodyExp = GetRealBody(proc, paramExp);
+
+            // Func<bool, Tuple<string, string>>
+            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(bool));
+            var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
+            var lambda = lambdaExp.Compile();
+            var methods = typeof(Observable).GetMethods().Where(m => m.Name == "Where").ToArray();
+            var methodTemplate = methods.First();
+
+            var method = methodTemplate.MakeGenericMethod(elemType);
+            var resultStream = method.Invoke(null, new[] { stream, lambda });
+
+            return new LiteralExpression(resultStream);
+        }
+
+        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+
+            var scopeCtor = typeof(Scope).GetConstructors().First();
+            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
+            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
+
+            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
+
+            // Wrap paramExp in Literal? Yes?
+            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
+            var litExpCtorExp = Expression.New(litExpCtor, paramExp);
+            // Add parameter to scope.
+
+            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
+            var zeroExp = Expression.Constant(0);
+            var setCallExp = Expression.Call(procScopeVarExp, setMethod, zeroExp, litExpCtorExp);
+
+            // Call procedure: proc.Evaluate(procScope);
+            var procExp = Expression.Constant(proc);
+            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
+            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
+
+            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
+
+            var tailEvalMethod =
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
+
+            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
+
+            // Compare to Nihil false.
+            var equalExp = Expression.NotEqual(Expression.Constant(_falseSymbol), evalTailCallExp);
+
+            // Unwrap literal.
+            //var convertedResultExp = Expression.Convert(equalExp, typeof(LiteralExpression));
+            //var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
+
+            //var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
+
+            var bodyExp = Expression.Block(new[] { procScopeVarExp },
+                assignProcScopeExp, litExpCtorExp, setCallExp, equalExp);
+
+            return bodyExp;
+        }
+
+        private object GetAtom(IScope env, int i)
+        {
+            var atom = ((AtomExpression)env.Get(i)).Atom;
+            return atom;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            var s = env.Symbols;
+            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("s"));
+        }
+
     }
 
     class GetMatrixCellProcedure : NativeProcedure
