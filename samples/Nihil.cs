@@ -1302,6 +1302,7 @@ namespace Metarx
             env.Add("rx-select", new RxSelectProcedure(env));
             env.Add("rx-where", new RxWhereProcedure(env));
             env.Add("rx-zip", new RxZipProcedure(env));
+            env.Add("rx-combine-latest", new RxCombineLatestProcedure(env));
             return env;
         }
 
@@ -1552,9 +1553,9 @@ namespace Metarx
         }
     }
 
-    class RxZipProcedure : NativeProcedure
+    abstract class RxPairwiseProcedure : NativeProcedure
     {
-        public RxZipProcedure(IEnvironment env)
+        protected RxPairwiseProcedure(IEnvironment env)
             : base(env)
         {
         }
@@ -1576,14 +1577,90 @@ namespace Metarx
             var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp1, paramExp2);
             var lambda = lambdaExp.Compile();
 
-            var zipMethod = GetZipMethodTemplate().MakeGenericMethod(elemType1, elemType2, typeof(object));
-            
-            var resultStream = zipMethod.Invoke(null, new[] { stream1, stream2, lambda });
+            var method = GetMethodTemplate().MakeGenericMethod(elemType1, elemType2, typeof(object));
+
+            var resultStream = method.Invoke(null, new[] { stream1, stream2, lambda });
 
             return new LiteralExpression(resultStream);
         }
 
-        private static MethodInfo GetZipMethodTemplate()
+        private object GetAtom(IScope env, int i)
+        {
+            var atom = ((AtomExpression)env.Get(i)).Atom;
+            return atom;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            var s = env.Symbols;
+            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"), s.GetSymbol("y"));
+        }
+
+        protected abstract MethodInfo GetMethodTemplate();
+
+        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp0, ParameterExpression paramExp1)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+
+            // Create variable for new scope.
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+
+            // Scope procScope = new Scope(currentScope, scopeSize);
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp,
+                Expression.New(typeof(Scope).GetConstructors().First(),
+                    currentScopeExp,
+                    scopeSizeExp));
+
+            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
+
+            // procScope.Set(0, paramExp0);
+            var setZeroCallExp = Expression.Call(
+                procScopeVarExp,
+                setMethod,
+                Expression.Constant(0),
+                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp0));
+
+            // procScope.Set(1, paramExp1);
+            var setOneCallExp = Expression.Call(
+                procScopeVarExp,
+                setMethod,
+                Expression.Constant(1),
+                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp1));
+
+            // Call procedure (which involves evaluating tail call as well): 
+            // proc.Evaluate(procScope);
+            var evalTailCallExp = Expression.Call(
+                Expression.Convert(Expression.Call(
+                    Expression.Constant(proc),
+                    typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate"),
+                    procScopeVarExp), typeof(TailCall)),
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any()));
+
+            // Unwrap atom from literalexpression:
+            var atomResultExp = Expression.Call(
+                Expression.Convert(evalTailCallExp, typeof(LiteralExpression)),
+                typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom"));
+
+            var bodyExp = Expression.Block(
+                new[] { procScopeVarExp },
+                assignProcScopeExp,
+                setZeroCallExp,
+                setOneCallExp,
+                atomResultExp);
+
+            return bodyExp;
+        }
+    }
+
+    class RxZipProcedure : RxPairwiseProcedure
+    {
+        public RxZipProcedure(IEnvironment env)
+            : base(env)
+        {
+        }
+
+        protected override MethodInfo GetMethodTemplate()
         {
             Predicate<ParameterInfo> paramCheck =
                 p => p.ParameterType.GetGenericTypeDefinition() == typeof(IObservable<>);
@@ -1602,71 +1679,33 @@ namespace Metarx
 
             return zipMethod;
         }
+    }
 
-        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp0, ParameterExpression paramExp1)
+    class RxCombineLatestProcedure : RxPairwiseProcedure
+    {
+        public RxCombineLatestProcedure(IEnvironment env)
+            : base(env)
         {
-            var currentScopeExp = Expression.Constant(proc.Scope);
-            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
-
-            // Create variable for new scope.
-            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
-
-            // Scope procScope = new Scope(currentScope, scopeSize);
-            var assignProcScopeExp = Expression.Assign(procScopeVarExp, 
-                Expression.New(typeof(Scope).GetConstructors().First(), 
-                    currentScopeExp, 
-                    scopeSizeExp));
-
-            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
-
-            // procScope.Set(0, paramExp0);
-            var setZeroCallExp = Expression.Call(
-                procScopeVarExp, 
-                setMethod, 
-                Expression.Constant(0), 
-                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp0));
-
-            // procScope.Set(1, paramExp1);
-            var setOneCallExp = Expression.Call(
-                procScopeVarExp,
-                setMethod,
-                Expression.Constant(1),
-                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp1));
-
-            // Call procedure (which involves evaluating tail call as well): 
-            // proc.Evaluate(procScope);
-            var evalTailCallExp = Expression.Call(
-                Expression.Convert(Expression.Call(
-                    Expression.Constant(proc), 
-                    typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate"), 
-                    procScopeVarExp), typeof(TailCall)), 
-                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any()));
-
-            // Unwrap atom from literalexpression:
-            var atomResultExp = Expression.Call(
-                Expression.Convert(evalTailCallExp, typeof(LiteralExpression)), 
-                typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom"));
-
-            var bodyExp = Expression.Block(
-                new[] { procScopeVarExp },
-                assignProcScopeExp, 
-                setZeroCallExp, 
-                setOneCallExp, 
-                atomResultExp);
-            
-            return bodyExp;
         }
 
-        private object GetAtom(IScope env, int i)
+        protected override MethodInfo GetMethodTemplate()
         {
-            var atom = ((AtomExpression)env.Get(i)).Atom;
-            return atom;
-        }
+            Predicate<ParameterInfo> paramCheck =
+                p => p.ParameterType.GetGenericTypeDefinition() == typeof(IObservable<>);
 
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"), s.GetSymbol("y"));
+            var methods = typeof(Observable)
+                .GetMethods()
+                .Where(m => m.Name == "CombineLatest" && m.GetParameters().Count() == 3)
+                .Where(m =>
+                {
+                    var ps = m.GetParameters();
+                    var result = paramCheck(ps[0]) && paramCheck(ps[1]);
+                    return result;
+                });
+
+            var method = methods.First();
+
+            return method;
         }
     }
 
