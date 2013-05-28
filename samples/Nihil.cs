@@ -1,31 +1,74 @@
 using System.Collections.Generic;
 using System.Collections;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Reactive.Linq;
 using System;
 
-namespace Nihil
+namespace Metarx
 {
-    public class EntryPoint
-    {    
-        public IObservable<object> Execute(IObservable<Tuple<string, string>> stream) 
+    public class NihilProgramWrapper
+    {
+        private readonly string _procedureName;
+
+        private readonly ChainedEnvironment _env;
+
+        public NihilProgramWrapper(string procedureName, IEnvironment baseEnv)
         {
-           var s = stream.Where(t => t.Item1 == "<default>").Select(t => t.Item2);
-           var result = s.Select(exp => ExecuteExpression(exp));
-           return result;
+            _procedureName = procedureName;
+            _env = new ChainedEnvironment(baseEnv);
         }
 
-        public object ExecuteExpression(string s) {
-           var evaluator = new Evaluator();
-           var reader = new Reader();
-           var sexp = reader.Read(s, evaluator.Environment);
-           var result = evaluator.Evaluate(sexp);
-           return result;
-        }
-        
-        public override string ToString() 
+        public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
         {
-           return "I am Nihil.";
+            var reader = new Reader();
+            _env.Add("globalrxstream", new LiteralExpression(stream));
+            var callText = string.Format("({0} globalrxstream)", _procedureName);
+            var callExp = reader.Read(callText, _env);
+            var evaluator = new Evaluator { Environment = _env };
+            var evalResult = (AtomExpression)evaluator.Evaluate(callExp);
+            var atom = evalResult.Atom;
+            var obs = atom as IObservable<object>;
+            return obs;
+        } 
+    }
+
+    public class EntryPoint
+    {
+        public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
+        {
+            var s = stream.Select(t => t.Item2);
+            var result = s.Select(ExecuteExpression);
+            return result;
+        }
+
+        public object ExecuteExpression(string s)
+        {
+            var evaluator = new Evaluator();
+            var reader = new Reader();
+            var sexp = reader.Read(s, evaluator.Environment);
+            var result = evaluator.Evaluate(sexp);
+            var env = evaluator.Environment;
+            if (result is Symbol)
+            {
+                var sym = (Symbol)result;
+                var varRef = env.Lookup(sym);
+                var evaluee = varRef.Evaluate((IScope)env, false);
+                if (evaluee is Procedure)
+                {
+                    var procName = sym.Print();
+                    return new NihilProgramWrapper(procName, env);
+                }
+            }
+
+            var value = ((LiteralExpression)result).Atom;
+            return value;
+        }
+
+        public override string ToString()
+        {
+            return "I am Nihil.";
         }
     }
 
@@ -83,6 +126,11 @@ namespace Nihil
                 return sum;
             }
 
+            if (val is string)
+            {
+                var sum = string.Join("", values.OfType<string>());
+                return sum;
+            }
             throw new Exception("I don't know how to add this stuff together. First value has type " + val.GetType() + ".");
         }
     }
@@ -150,7 +198,8 @@ namespace Nihil
         private readonly Symbol _false;
         private readonly Symbol _true;
 
-        public AtomCheckProcedure(IEnvironment env) : base(env)
+        public AtomCheckProcedure(IEnvironment env)
+            : base(env)
         {
             _false = env.Symbols.False;
             _true = env.Symbols.True;
@@ -176,7 +225,7 @@ namespace Nihil
         {
             _atom = atom;
         }
-        
+
         public override CompiledForm Compile(IEnvironment env)
         {
             return new ValueForm(this);
@@ -280,7 +329,7 @@ namespace Nihil
 
         public override SExpression Evaluate(IScope env)
         {
-            var cell = (ConsCell) env.Get(0);
+            var cell = (ConsCell)env.Get(0);
             return cell.Car;
         }
 
@@ -497,7 +546,7 @@ namespace Nihil
             int i = 0;
             while (!(c is Nil))
             {
-                var clauseCell = (ConsCell) c.Car;
+                var clauseCell = (ConsCell)c.Car;
                 if (clauseCell.Car == env.Symbols.Else) _clauses[i] = new CompiledForm[] { clauseCell.Next.Car.Compile(env) };
                 else _clauses[i] = new CompiledForm[] { clauseCell.Car.Compile(env), clauseCell.Next.Car.Compile(env) };
                 c = c.Next;
@@ -511,7 +560,7 @@ namespace Nihil
             {
                 if (f.Length == 1) return f[0].Evaluate(env, isTail);
                 CompiledForm predicate = f[0];
-                if ( _false != predicate.Evaluate(env, false))
+                if (_false != predicate.Evaluate(env, false))
                 {
                     return f[1].Evaluate(env, isTail);
                 }
@@ -571,10 +620,10 @@ namespace Nihil
     {
         public abstract SExpression Car { get; set; }
         public abstract SExpression Cdr { get; set; }
-        
+
         public ConsCell Next
         {
-            get { return (ConsCell) Cdr; }
+            get { return (ConsCell)Cdr; }
         }
 
         public int Size()
@@ -595,12 +644,14 @@ namespace Nihil
             ConsCell c = this;
             while (!(c is Nil))
             {
-                CompiledForm form = ((ConsCell)c).Car.Compile(env);
+                var item = c.Car;
+                var itemType = item.GetType();
+                CompiledForm form = item.Compile(env);
                 if (!(form is NoopForm)) res.Add(form);
                 c = c.Next;
             }
-            
-            return (CompiledForm[]) res.ToArray(typeof(CompiledForm));
+
+            return (CompiledForm[])res.ToArray(typeof(CompiledForm));
         }
 
         public static ConsCell List(params SExpression[] args)
@@ -725,7 +776,7 @@ namespace Nihil
                 var tempCdr = cdrCell.Cdr;
                 if (tempCdr is ConsCell)
                 {
-                    cdrCell = (ConsCell) tempCdr;
+                    cdrCell = (ConsCell)tempCdr;
                 }
                 else
                 {
@@ -733,7 +784,7 @@ namespace Nihil
                     break;
                 }
             } while (!cdrCell.IsNil());
-            
+
             return "(" + s + ")";
         }
 
@@ -821,8 +872,8 @@ namespace Nihil
         {
             var cdrCell = Next;
             if (cdrCell.Car is ConsCell) return CreateDefineProcedureForm(env);
-            var name = (Symbol) cdrCell.Car;
-            cdrCell = (ConsCell) cdrCell.Cdr;
+            var name = (Symbol)cdrCell.Car;
+            cdrCell = (ConsCell)cdrCell.Cdr;
             var x = cdrCell.Car;
             return new DefineForm(name, x, env);
         }
@@ -830,8 +881,8 @@ namespace Nihil
         private CompiledForm CreateSetForm(IEnvironment env)
         {
             var cdrCell = Next;
-            var name = (Symbol) cdrCell.Car;
-            cdrCell = (ConsCell) cdrCell.Cdr;
+            var name = (Symbol)cdrCell.Car;
+            cdrCell = (ConsCell)cdrCell.Cdr;
             var x = cdrCell.Car;
             return new SetForm(name, x, env);
         }
@@ -839,7 +890,7 @@ namespace Nihil
         private CompiledForm CreateDefineProcedureForm(IEnvironment env)
         {
             var symbols = env.Symbols;
-            var signature = (ConsCell) Next.Car;
+            var signature = (ConsCell)Next.Car;
             var parameters = signature.Cdr;
             var body = Next.Next;
             var lambdaForm = symbols.Lambda.Cons(parameters.Cons(body));
@@ -847,12 +898,12 @@ namespace Nihil
             var name = signature.Car;
             var defineForm = symbols.Define.Cons(name.Cons(lambdaForm.Cons(Nil.Instance)));
             return defineForm.CreateDefineForm(env);
-            
+
         }
 
         private CompiledForm CreateLambdaForm(IEnvironment env)
         {
-            var cell = (ConsCell) Cdr;
+            var cell = (ConsCell)Cdr;
             var forms = cell.Next;
             return new LambdaForm(cell.Car, forms, env);
         }
@@ -869,9 +920,9 @@ namespace Nihil
 
         private CompiledForm CreateIfForm(IEnvironment env)
         {
-            var cdrCell = (ConsCell) Cdr;
+            var cdrCell = (ConsCell)Cdr;
             var predicate = cdrCell.Car;
-            cdrCell = cdrCell.Next; 
+            cdrCell = cdrCell.Next;
             var consequence = cdrCell.Car;
             cdrCell = cdrCell.Next;
             if (cdrCell.IsNil())
@@ -937,10 +988,10 @@ namespace Nihil
             var parameters = signature.Cdr;
             var body = Next.Next;
             var lambdaForm = symbols.Lambda.Cons(parameters.Cons(body));
-            var res = (LambdaForm) lambdaForm.Compile(env);
-            var name = (Symbol) signature.Car;
+            var res = (LambdaForm)lambdaForm.Compile(env);
+            var name = (Symbol)signature.Car;
             env.Add(name);
-            env.Lookup(name).Set(res.MakeMacro((IScope) env), (IScope) env);
+            env.Lookup(name).Set(res.MakeMacro((IScope)env), (IScope)env);
             return new NoopForm(signature.Car);
         }
 
@@ -1002,7 +1053,7 @@ namespace Nihil
         public override SExpression Evaluate(IScope env)
         {
             var sexp = env.Get(0);
-            object o = ((AtomExpression) sexp).Atom;
+            object o = ((AtomExpression)sexp).Atom;
             return new LiteralExpression(Decrement(o));
         }
 
@@ -1054,7 +1105,7 @@ namespace Nihil
 
     public class DivideProcedure : NativeProcedure
     {
-        public DivideProcedure(IEnvironment env) : base(env) {}
+        public DivideProcedure(IEnvironment env) : base(env) { }
 
         public override SExpression Evaluate(IScope env)
         {
@@ -1088,7 +1139,7 @@ namespace Nihil
                 int result = (int)val;
                 if (values.Length == 0)
                 {
-                    return 1/result;
+                    return 1 / result;
                 }
 
                 for (int i = 0; i < values.Length; i++)
@@ -1104,7 +1155,7 @@ namespace Nihil
                 double result = (double)val;
                 if (values.Length == 0)
                 {
-                    return 1/result;
+                    return 1 / result;
                 }
 
                 for (int i = 0; i < values.Length; i++)
@@ -1124,7 +1175,8 @@ namespace Nihil
         private readonly Symbol _false;
         private readonly Symbol _true;
 
-        public EqualsProcedure(IEnvironment env) : base(env)
+        public EqualsProcedure(IEnvironment env)
+            : base(env)
         {
             _false = env.Symbols.False;
             _true = env.Symbols.True;
@@ -1134,7 +1186,8 @@ namespace Nihil
         {
             object o1 = ((AtomExpression)env.Get(0)).Atom;
             object o2 = ((AtomExpression)env.Get(1)).Atom;
-            return Compare(o1, o2) ? _true : _false;
+            var result = Compare(o1, o2) ? _true : _false;
+            return result;
         }
 
         public override SExpression CreateFormals(IEnvironment env)
@@ -1148,10 +1201,17 @@ namespace Nihil
             {
                 return Compare((int)o1, (int)o2);
             }
+
             if ((o1 is double || o1 is int) && (o2 is double || o2 is int))
             {
                 return Compare((double)o1, (double)o2);
             }
+
+            if (o1 is string && o2 is string)
+            {
+                return o1.Equals(o2);
+            }
+
             throw new ArgumentException("=: Invalid arguments of types: " + o1.GetType() + " and " + o2.GetType());
         }
 
@@ -1168,11 +1228,15 @@ namespace Nihil
 
     public class Evaluator
     {
-        private readonly IEnvironment _env;
+        private IEnvironment _env;
 
         public IEnvironment Environment
         {
             get { return _env; }
+            set
+            {
+                _env = value;
+            }
         }
 
         public Evaluator()
@@ -1235,6 +1299,9 @@ namespace Nihil
             env.Add("is-cell?", new IsMatrixCellProcedure(env));
             env.Add("gensym", new GensymProcedure(env));
             env.Add("str", new StringProcedure(env));
+            env.Add("rx-select", new RxSelectProcedure(env));
+            env.Add("rx-where", new RxWhereProcedure(env));
+            env.Add("rx-zip", new RxZipProcedure(env));
             return env;
         }
 
@@ -1304,8 +1371,302 @@ namespace Nihil
 
         public override SExpression Evaluate(IScope env)
         {
-            var name = (string) ((AtomExpression)env.Get(0)).Atom;
+            var name = (string)((AtomExpression)env.Get(0)).Atom;
             return new Symbol("gen:" + name);
+        }
+    }
+
+    class RxSelectProcedure : NativeProcedure
+    {
+        public RxSelectProcedure(IEnvironment env)
+            : base(env)
+        {
+        }
+
+        public override SExpression Evaluate(IScope evalScope)
+        {
+            var proc = (Procedure)evalScope.Get(0);
+            var stream = GetAtom(evalScope, 1);
+            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
+
+            var paramExp = Expression.Parameter(elemType, "it");
+            var bodyExp = GetRealBody(proc, paramExp);
+
+            // Func<object, Tuple<string, string>>
+            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(object));
+            var selectLambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
+            var selectLambda = selectLambdaExp.Compile();
+            var selectors = typeof(Observable).GetMethods().Where(m => m.Name == "Select").ToArray();
+            var firstSel = selectors.First();
+
+            var selectorMethod = firstSel.MakeGenericMethod(elemType, typeof(object));
+            var resultStream = selectorMethod.Invoke(null, new [] { stream, selectLambda } );
+
+            return new LiteralExpression(resultStream);
+        }
+
+        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+
+            var scopeCtor = typeof(Scope).GetConstructors().First();
+            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
+            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
+
+            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
+ 
+            // Wrap paramExp in Literal? Yes?
+            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
+            var litExpCtorExp = Expression.New(litExpCtor, paramExp);
+            // Add parameter to scope.
+
+            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
+            var zeroExp = Expression.Constant(0);
+            var setCallExp = Expression.Call(procScopeVarExp, setMethod, zeroExp, litExpCtorExp);
+
+            // Call procedure: proc.Evaluate(procScope);
+            var procExp = Expression.Constant(proc);
+            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
+            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
+
+            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
+
+            var tailEvalMethod =
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
+
+            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
+
+            // Unwrap literal.
+            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
+            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
+            
+            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
+
+            var bodyExp = Expression.Block(new [] { procScopeVarExp }, 
+                assignProcScopeExp, litExpCtorExp, setCallExp, atomResultExp);
+            return bodyExp;
+        }
+
+        private object GetAtom(IScope env, int i)
+        {
+            var atom = ((AtomExpression)env.Get(i)).Atom;
+            return atom;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            var s = env.Symbols;
+            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
+        }
+        
+    }
+
+    class RxWhereProcedure : NativeProcedure
+    {
+        private readonly Symbol _falseSymbol;
+
+        public RxWhereProcedure(IEnvironment env)
+            : base(env)
+        {
+            _falseSymbol = env.Symbols.False;
+        }
+
+        public override SExpression Evaluate(IScope evalScope)
+        {
+            var proc = (Procedure)evalScope.Get(0);
+            var stream = GetAtom(evalScope, 1);
+            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
+
+            var paramExp = Expression.Parameter(elemType, "it");
+            var bodyExp = GetRealBody(proc, paramExp);
+
+            // Func<bool, Tuple<string, string>>
+            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(bool));
+            var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
+            var lambda = lambdaExp.Compile();
+            var methods = typeof(Observable).GetMethods().Where(m => m.Name == "Where").ToArray();
+            var methodTemplate = methods.First();
+
+            var method = methodTemplate.MakeGenericMethod(elemType);
+            var resultStream = method.Invoke(null, new[] { stream, lambda });
+
+            return new LiteralExpression(resultStream);
+        }
+
+        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+
+            var scopeCtor = typeof(Scope).GetConstructors().First();
+            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
+            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
+
+            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
+
+            // Wrap paramExp in Literal? Yes?
+            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
+            var litExpCtorExp = Expression.New(litExpCtor, paramExp);
+            // Add parameter to scope.
+
+            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
+            var zeroExp = Expression.Constant(0);
+            var setCallExp = Expression.Call(procScopeVarExp, setMethod, zeroExp, litExpCtorExp);
+
+            // Call procedure: proc.Evaluate(procScope);
+            var procExp = Expression.Constant(proc);
+            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
+            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
+
+            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
+
+            var tailEvalMethod =
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
+
+            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
+
+            // Compare to Nihil false.
+            var equalExp = Expression.NotEqual(Expression.Constant(_falseSymbol), evalTailCallExp);
+        
+            var bodyExp = Expression.Block(new[] { procScopeVarExp },
+                assignProcScopeExp, litExpCtorExp, setCallExp, equalExp);
+
+            return bodyExp;
+        }
+
+        private object GetAtom(IScope env, int i)
+        {
+            var atom = ((AtomExpression)env.Get(i)).Atom;
+            return atom;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            var s = env.Symbols;
+            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
+        }
+    }
+
+    class RxZipProcedure : NativeProcedure
+    {
+        public RxZipProcedure(IEnvironment env)
+            : base(env)
+        {
+        }
+
+        public override SExpression Evaluate(IScope evalScope)
+        {
+            var proc = (Procedure)evalScope.Get(0);
+            var stream1 = GetAtom(evalScope, 1);
+            var stream2 = GetAtom(evalScope, 2);
+            Type elemType1 = stream1.GetType().BaseType.GetGenericArguments().First();
+            Type elemType2 = stream2.GetType().BaseType.GetGenericArguments().First();
+
+            var paramExp1 = Expression.Parameter(elemType1, "x");
+            var paramExp2 = Expression.Parameter(elemType2, "y");
+            var bodyExp = GetRealBody(proc, paramExp1, paramExp2);
+
+            // Func<Foo, Bar, object>
+            Type funcType = typeof(Func<,,>).MakeGenericType(elemType1, elemType2, typeof(object));
+            var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp1, paramExp2);
+            var lambda = lambdaExp.Compile();
+
+            var zipMethod = GetZipMethodTemplate().MakeGenericMethod(elemType1, elemType2, typeof(object));
+            
+            var resultStream = zipMethod.Invoke(null, new[] { stream1, stream2, lambda });
+
+            return new LiteralExpression(resultStream);
+        }
+
+        private static MethodInfo GetZipMethodTemplate()
+        {
+            Predicate<ParameterInfo> paramCheck =
+                p => p.ParameterType.GetGenericTypeDefinition() == typeof(IObservable<>);
+
+            var zippers = typeof(Observable)
+                .GetMethods()
+                .Where(m => m.Name == "Zip" && m.GetParameters().Count() == 3)
+                .Where(m =>
+                {
+                    var ps = m.GetParameters();
+                    var result = paramCheck(ps[0]) && paramCheck(ps[1]);
+                    return result;
+                });
+
+            var zipMethod = zippers.First();
+
+            return zipMethod;
+        }
+
+        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp0, ParameterExpression paramExp1)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+
+            // Create variable for new scope.
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+
+            // Scope procScope = new Scope(currentScope, scopeSize);
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp, 
+                Expression.New(typeof(Scope).GetConstructors().First(), 
+                    currentScopeExp, 
+                    scopeSizeExp));
+
+            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
+
+            // procScope.Set(0, paramExp0);
+            var setZeroCallExp = Expression.Call(
+                procScopeVarExp, 
+                setMethod, 
+                Expression.Constant(0), 
+                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp0));
+
+            // procScope.Set(1, paramExp1);
+            var setOneCallExp = Expression.Call(
+                procScopeVarExp,
+                setMethod,
+                Expression.Constant(1),
+                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp1));
+
+            // Call procedure (which involves evaluating tail call as well): 
+            // proc.Evaluate(procScope);
+            var evalTailCallExp = Expression.Call(
+                Expression.Convert(Expression.Call(
+                    Expression.Constant(proc), 
+                    typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate"), 
+                    procScopeVarExp), typeof(TailCall)), 
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any()));
+
+            // Unwrap atom from literalexpression:
+            var atomResultExp = Expression.Call(
+                Expression.Convert(evalTailCallExp, typeof(LiteralExpression)), 
+                typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom"));
+
+            var bodyExp = Expression.Block(
+                new[] { procScopeVarExp },
+                assignProcScopeExp, 
+                setZeroCallExp, 
+                setOneCallExp, 
+                atomResultExp);
+            
+            return bodyExp;
+        }
+
+        private object GetAtom(IScope env, int i)
+        {
+            var atom = ((AtomExpression)env.Get(i)).Atom;
+            return atom;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            var s = env.Symbols;
+            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"), s.GetSymbol("y"));
         }
     }
 
@@ -1370,7 +1731,7 @@ namespace Nihil
 
     public interface IEnvironment
     {
-        Symbols Symbols{ get;}
+        Symbols Symbols { get; }
         IEnvironment OuterEnv { get; }
 
         VariableReference Lookup(Symbol symbol);
@@ -1409,7 +1770,7 @@ namespace Nihil
             _consequent = consequent.Compile(env);
             if (alternative != null)
             {
-                _alternative = alternative.Compile(env);                
+                _alternative = alternative.Compile(env);
             }
         }
 
@@ -1419,7 +1780,7 @@ namespace Nihil
             if (x == null)
             {
                 return _false;
-            }            
+            }
             return x.Evaluate(env, isTail);
         }
 
@@ -1504,7 +1865,7 @@ namespace Nihil
     {
         public InvokeCtorProcedure(IEnvironment env)
             : base(env)
-        {   
+        {
         }
 
         public override SExpression Evaluate(IScope env)
@@ -1578,7 +1939,7 @@ namespace Nihil
     {
         public InvokeInstanceMethodProcedure(IEnvironment env)
             : base(env)
-        {   
+        {
         }
 
         protected override Type GetType(object atom)
@@ -1617,7 +1978,7 @@ namespace Nihil
             var result = method.Invoke(instance, args);
             if (result == null) return Nil.Instance;
             if (result is bool) return (bool)result ? _true : _false;
-                
+
             return new LiteralExpression(result);
         }
 
@@ -1754,7 +2115,7 @@ namespace Nihil
         }
     }
 
-    public class LambdaForm : CompiledForm 
+    public class LambdaForm : CompiledForm
     {
         private readonly SExpression _formals; // Needs to be all expressions with variable names.
         private readonly CompiledForm[] _forms;
@@ -1767,7 +2128,6 @@ namespace Nihil
             AddParameters(newEnv);
             _forms = forms.CompileAll(newEnv);
             _scopeSize = newEnv.ScopeSize();
-
         }
 
         private void AddParameters(IEnvironment env)
@@ -1775,7 +2135,7 @@ namespace Nihil
             SExpression exp = _formals;
             while (exp is ConsCellImpl)
             {
-                env.Add((Symbol) ((ConsCell)exp).Car);
+                env.Add((Symbol)((ConsCell)exp).Car);
                 exp = ((ConsCell)exp).Cdr;
             }
             if (exp is Symbol) env.Add((Symbol)exp);
@@ -1839,7 +2199,8 @@ namespace Nihil
 
     public class LiteralExpression : AtomExpression
     {
-        public LiteralExpression(object literal) : base(literal)
+        public LiteralExpression(object literal)
+            : base(literal)
         {
             if (literal is LiteralExpression)
             {
@@ -1926,14 +2287,14 @@ namespace Nihil
 
     public class MihilException : Exception
     {
-        public MihilException(string message) : base(message) {}
+        public MihilException(string message) : base(message) { }
 
-        public MihilException(string message, Exception innerException) : base(message, innerException) {}
+        public MihilException(string message, Exception innerException) : base(message, innerException) { }
     }
 
     public class MultiplyProcedure : NativeProcedure
     {
-        public MultiplyProcedure(IEnvironment env) : base(env) {}
+        public MultiplyProcedure(IEnvironment env) : base(env) { }
 
         public override SExpression CreateFormals(IEnvironment env)
         {
@@ -1992,24 +2353,40 @@ namespace Nihil
     public abstract class NativeProcedure : SExpression, IProcedure
     {
         private readonly IScope _scope;
-        public IScope Scope { get { return _scope; } }
-        private readonly SExpression _formals;
-        public SExpression Formals { get { return _formals; } }
 
-        public abstract SExpression Evaluate(IScope env);
-        public abstract SExpression CreateFormals(IEnvironment env);
+        private readonly IEnvironment _staticEnv;
+        
+        private readonly SExpression _formals;
 
         private int _scopeSize;
+
+        public IScope Scope { get { return _scope; } }
+        
+        public SExpression Formals { get { return _formals; } }
+        
+        public abstract SExpression Evaluate(IScope env);
+        
+        public abstract SExpression CreateFormals(IEnvironment env);
+
         public int ScopeSize
         {
             get { return _scopeSize; }
+        }
+
+        public IEnvironment StaticEnvironment
+        {
+            get
+            {
+                return _staticEnv;
+            }
         }
 
         protected NativeProcedure(IEnvironment env)
         {
             _formals = CreateFormals(env);
             _scopeSize = CalculateScopeSize();
-            _scope = (IScope) env;
+            _scope = (IScope)env;
+            _staticEnv = env;
         }
 
         private int CalculateScopeSize()
@@ -2087,7 +2464,8 @@ namespace Nihil
         private readonly Symbol _false;
         private readonly Symbol _true;
 
-        public NullCheckProcedure(IEnvironment env) : base(env)
+        public NullCheckProcedure(IEnvironment env)
+            : base(env)
         {
             _false = env.Symbols.False;
             _true = env.Symbols.True;
@@ -2109,10 +2487,10 @@ namespace Nihil
     public class NullEnvironment : IEnvironment
     {
         private readonly Symbols _symbols = new Symbols();
-        
+
         public Symbols Symbols
         {
-            get {return _symbols;}
+            get { return _symbols; }
         }
 
         public VariableReference LookupOrNull(Symbol symbol)
@@ -2202,7 +2580,8 @@ namespace Nihil
         private readonly Symbol _false;
         private readonly Symbol _true;
 
-        public PairCheckProcedure(IEnvironment env) : base(env)
+        public PairCheckProcedure(IEnvironment env)
+            : base(env)
         {
             _false = env.Symbols.False;
             _true = env.Symbols.True;
@@ -2247,11 +2626,7 @@ namespace Nihil
             get { return _scope; }
         }
 
-        private int _scopeSize;
-        public int ScopeSize
-        {
-            get { return _scopeSize; }
-        }
+        public int ScopeSize { get; private set; }
 
         public Procedure(IScope scope, SExpression formals, CompiledForm[] forms, int scopeSize)
         {
@@ -2260,9 +2635,8 @@ namespace Nihil
             _scope = scope;
             _formals = formals;
             _forms = forms;
-            _scopeSize = scopeSize;
+            ScopeSize = scopeSize;
         }
-
 
         public SExpression Formals
         {
@@ -2288,7 +2662,6 @@ namespace Nihil
             var result = _forms[_forms.Length - 1].Evaluate(env, true);
             return result;
         }
-
     }
 
     public class ProcedureCallForm : CompiledForm
@@ -2299,12 +2672,16 @@ namespace Nihil
 
         public CompiledForm[] Operands
         {
-           get { return _operands; }
+            get { return _operands; }
         }
 
         public ProcedureCallForm(IEnvironment env, SExpression proc, ConsCell operands, SExpression rest = null)
         {
+            // SExpression -> LambdaForm (or Symbol???)
             _proc = proc.Compile(env);
+
+            var beforeType = proc.GetType();
+            var compiledType = _proc.GetType();
 
             if (operands == null)
             {
@@ -2319,7 +2696,7 @@ namespace Nihil
             if (list.Next is Nil) return Nil.Instance;
             return list.Car.Cons(NotLast(list.Next));
         }
-        
+
         private static SExpression Last(ConsCell list)
         {
             if (list.Next is Nil) return list.Car;
@@ -2336,8 +2713,8 @@ namespace Nihil
             if (isTail) return TailCall(callEnv);
 
             var pcf = this;
-            
-            var proc = (IProcedure) pcf._proc.Evaluate(callEnv, false);
+
+            var proc = (IProcedure)pcf._proc.Evaluate(callEnv, false);
             var scope = new Scope(proc.Scope, proc.ScopeSize);
             ConsCell args = EvaluateAll(callEnv, pcf._operands, pcf._rest);
             scope.AddArguments(args, proc.Formals);
@@ -2353,7 +2730,7 @@ namespace Nihil
 
         private static ConsCell EvaluateAll(IScope env, CompiledForm[] forms, CompiledForm rest, int index = 0)
         {
-            if (index == forms.Length) return (rest == null) ? Nil.Instance : (ConsCell) rest.Evaluate(env, false);
+            if (index == forms.Length) return (rest == null) ? Nil.Instance : (ConsCell)rest.Evaluate(env, false);
             return new ConsCellImpl(forms[index].Evaluate(env, false), EvaluateAll(env, forms, rest, index + 1));
         }
     }
@@ -2390,7 +2767,7 @@ namespace Nihil
                 depth--;
             }
             var forms = new List<CompiledForm>();
-            while (!(cell is Nil)) 
+            while (!(cell is Nil))
             {
                 forms.Add(Quasiquote(env, cell.Car, depth));
                 cell = cell.Next;
@@ -2428,7 +2805,7 @@ namespace Nihil
         private int _pos;
         private int _indentation;
         private int _lastNewline;
-     
+
         public SExpression Read(String s, IEnvironment env)
         {
             _s = s;
@@ -2478,7 +2855,8 @@ namespace Nihil
                 {
                     hasBody = true;
                     indentation = bodyIndentation;
-                } else if (!hasBody) indentation = newIndentation;
+                }
+                else if (!hasBody) indentation = newIndentation;
 
                 if (res == env.Symbols.GetSymbol("."))
                 {
@@ -2535,7 +2913,7 @@ namespace Nihil
         {
             int startPos = _pos;
             bool isReadingString = false;
-            if ( _s[_pos] == '"')
+            if (_s[_pos] == '"')
             {
                 isReadingString = true;
                 _pos++;
@@ -2547,7 +2925,7 @@ namespace Nihil
                 char c = _s[_pos];
                 if (c == ')' || (IsWhiteSpace(c) && (!isReadingString || isDoneReadingString)))
                 {
-                    return CreateSuitableAtomExpression(startPos, isReadingString, env); 
+                    return CreateSuitableAtomExpression(startPos, isReadingString, env);
                 }
                 if (isDoneReadingString)
                 {
@@ -2591,7 +2969,7 @@ namespace Nihil
                 }
                 catch (Exception)
                 {
-                }                
+                }
             }
 
             if (IsIdentifier(atomText))
@@ -2637,7 +3015,8 @@ namespace Nihil
 
     internal class ReaderException : Exception
     {
-        public ReaderException(string msg) : base(msg)
+        public ReaderException(string msg)
+            : base(msg)
         {
         }
     }
@@ -2747,7 +3126,7 @@ namespace Nihil
 
         public override string ToString()
         {
-            return GetType() + ": " +  Print();
+            return GetType() + ": " + Print();
         }
 
         public ConsCellImpl Cons(SExpression cdr)
@@ -2758,7 +3137,7 @@ namespace Nihil
 
     class StringProcedure : NativeProcedure
     {
-        
+
         public StringProcedure(IEnvironment env) : base(env) { }
 
         public override SExpression CreateFormals(IEnvironment env)
@@ -2865,7 +3244,8 @@ namespace Nihil
 
         private readonly Symbol _false;
         private readonly Symbol _true;
-        public SymbolCheckProcedure(IEnvironment env) : base(env)
+        public SymbolCheckProcedure(IEnvironment env)
+            : base(env)
         {
             _false = env.Symbols.False;
             _true = env.Symbols.True;
@@ -2982,7 +3362,7 @@ namespace Nihil
         public Symbol GetSymbol(string name)
         {
             if (!_symbols.ContainsKey(name)) _symbols.Add(name, new Symbol(name));
-            return (Symbol)_symbols[name];
+            return _symbols[name];
         }
     }
 
@@ -3003,7 +3383,7 @@ namespace Nihil
 
         public SExpression Evaluate()
         {
-            
+
             SExpression res = this;
             while (res is TailCall)
             {
