@@ -1,0 +1,13 @@
+(define (execute stream)
+  (rx-zip 
+    (lambda (x y) (+ x ":" y)) 
+    (rx-select
+      (method get_Item2) 
+      (rx-where
+        (= "quux" (method get_Item1))
+        stream))
+    (rx-select
+      (method get_Item2)
+      (rx-where
+        (= "yak" (method get_Item1))
+        stream))))

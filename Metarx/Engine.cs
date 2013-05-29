@@ -7,6 +7,8 @@ namespace Metarx
 {
     public class Engine
     {
+        private const int MAX_QUEUED_VALUES = 20;
+
         private static int _counter = 0;
 
         private static readonly Engine _ = new Engine();
@@ -57,26 +59,15 @@ namespace Metarx
             var q = new Queue<object>();
             execute(GetProgramInputStream(id)).Subscribe(obj =>
                 {
-                    var x = obj;
+                    if (q.Count >= MAX_QUEUED_VALUES)
+                    {
+                        q.Dequeue();
+                    }
+
                     q.Enqueue(obj);
                 });
             ResultMap[id] = q;
             return id;
-        }
-    }
-
-    public class ProgramWrapper
-    {
-        private dynamic _program;
-
-        public ProgramWrapper(dynamic program)
-        {
-            _program = program;
-        }
-
-        public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
-        {
-            return stream.Where(t => t.Item1 == "<default>").Select(t => _program.Execute(t.Item2));
         }
     }
 }

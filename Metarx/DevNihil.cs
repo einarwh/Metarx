@@ -18,6 +18,12 @@ namespace Metarx
         {
             _procedureName = procedureName;
             _env = new ChainedEnvironment(baseEnv);
+            //var lispProcs = GetLispProcs();
+            //foreach (string p in lispProcs)
+            //{
+            //    _evaluator.Evaluate(_reader.Read(p, _evaluator.Environment));
+            //}            
+
         }
 
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
@@ -43,12 +49,54 @@ namespace Metarx
             return result;
         }
 
+        private IEnumerable<string> GetBasicLispThings()
+        {
+            var mapProc = "(define map (lambda (f list) (if (null? list) list (cons (f (car list)) (map f (cdr list))))))";
+
+            var reduceProc = "(define (reduce f list) (if (null? (cdr list)) (car list) (f (car list) (reduce f (cdr list)))))";
+
+            var forEachProc =
+                "(define for-each (lambda (f list) (unless (null? list) (f (car list)) (for-each f (cdr list)))))";
+
+            var notProc = "(define not (lambda (x) (if x #f #t)))";
+
+            var classMacro = "(define-macro (class x) `(cons 'class ,(str x)))";
+
+            var instanceStaticProc = "(define (invoke-instance/static x method . args) (if (pair? x) (apply invoke-static (cdr x) method args) (apply invoke-instance x method args)))";
+
+            var nativeMacro = "(define-macro (native x method . args) `(invoke-instance/static ,x ,(str method) ,@args))";
+
+            var letMacro = "(define-macro (let args . body) `((lambda ,(map car args) ,@body) ,@(map (lambda (x) (car (cdr x))) args)))";
+
+            var asPair = "(define (as-pair x) (if (pair? x) x `(,x)))";
+
+            var singleArrow =
+                "(define-macro (-> arg . rest) (if (null? rest) arg (begin (define call (as-pair (car rest))) `(-> (,(car call) ,arg ,@(cdr call)) ,@(cdr rest)))))";
+
+            var doubleArrow =
+                "(define-macro (->> arg . rest) (if (null? rest) arg (begin (define call (as-pair (car rest))) `(->> (,@call ,arg) ,@(cdr rest)))))";
+
+            var dotMacro =
+                "(define-macro (dot instance method . args) `(invoke-instance ,instance ,(str method) ,@args))";
+
+            var method0Macro =
+                "(define (method0 method) (lambda (instance . args) (apply invoke-instance instance method args)))";
+
+            var methodMacro = "(define-macro (method method) `(method0 ,(str method)))";
+
+            return new[] { mapProc, reduceProc, forEachProc, notProc, classMacro, instanceStaticProc, nativeMacro, letMacro, asPair, singleArrow, doubleArrow, dotMacro, method0Macro, methodMacro };
+        }
+
         public object ExecuteExpression(string s)
         {
             var evaluator = new Evaluator();
             var reader = new Reader();
-            var sexp = reader.Read(s, evaluator.Environment);
-            var result = evaluator.Evaluate(sexp);
+            foreach (string lispThing in GetBasicLispThings())
+            {
+                evaluator.Evaluate(reader.Read(lispThing, evaluator.Environment));
+            }
+
+            var result = evaluator.Evaluate(reader.Read(s, evaluator.Environment));
             var env = evaluator.Environment;
             if (result is Symbol)
             {
