@@ -2,6 +2,7 @@
 using System.Linq;
 using System.Reactive.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Nancy;
@@ -31,12 +32,17 @@ namespace Metarx
                 {
                     int id = Int32.Parse(ps.id);
                     var q = Engine.GetResultQueue(id);
-                    if (q == null || q.Count == 0)
+                    if (q == null)
                     {
                         return new Response { StatusCode = HttpStatusCode.NotFound };
                     }
 
-                    var it = Engine.GetResultQueue(id).Dequeue();
+                    while (q.Count == 0)
+                    {
+                        Thread.Sleep(1000);
+                    }
+
+                    var it = q.Dequeue();
                     if (IsExecutable(it))
                     {
                         dynamic program = it;
