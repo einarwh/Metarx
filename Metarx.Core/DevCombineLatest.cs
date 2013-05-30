@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Reactive.Linq;
 
-namespace Metarx
+namespace Metarx.Core
 {
     public class DevCombineLatest
     {

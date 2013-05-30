@@ -4,10 +4,10 @@
     (rx-select
       (method get_Item2) 
       (rx-where
-        (= "quux" (method get_Item1))
+        (lambda (t) (= "quux" ((method get_Item1) t)))
         stream))
     (rx-select
       (method get_Item2)
       (rx-where
-        (= "yak" (method get_Item1))
+        (lambda (t) (= "yak" ((method get_Item1) t)))
         stream))))

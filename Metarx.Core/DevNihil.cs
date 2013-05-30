@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Reactive.Linq;
 using System;
 
-namespace Metarx
+namespace Metarx.Core
 {
     public class NihilProgramWrapper
     {
@@ -40,6 +40,41 @@ namespace Metarx
         } 
     }
 
+    public class Interpreter
+    {
+        private readonly IEnvironment _env;
+        private readonly Evaluator _evaluator;
+        private readonly Reader _reader;
+
+        public Interpreter()
+        {
+            var evaluator = new Evaluator();
+            var reader = new Reader();
+            foreach (string lispThing in EntryPoint.GetBasicLispThings())
+            {
+                evaluator.Evaluate(reader.Read(lispThing, evaluator.Environment));
+            }
+
+            _reader = reader;
+            _evaluator = evaluator;
+            _env = evaluator.Environment;
+        }
+
+        public IEnvironment Environment
+        {
+            get
+            {
+                return _env;
+            }
+        }
+
+        public SExpression Interpret(string s)
+        {
+            var result = _evaluator.Evaluate(_reader.Read(s, _evaluator.Environment));
+            return result;
+        }
+    }
+
     public class EntryPoint
     {
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
@@ -49,7 +84,7 @@ namespace Metarx
             return result;
         }
 
-        private IEnumerable<string> GetBasicLispThings()
+        public static IEnumerable<string> GetBasicLispThings()
         {
             var mapProc = "(define map (lambda (f list) (if (null? list) list (cons (f (car list)) (map f (cdr list))))))";
 
@@ -1039,7 +1074,7 @@ namespace Metarx
             var res = (LambdaForm)lambdaForm.Compile(env);
             var name = (Symbol)signature.Car;
             env.Add(name);
-            env.Lookup(name).Set(res.MakeMacro((IScope)env), (IScope)env);
+            env.Lookup(name).Set(res.MakeMacro((IScope)env, name.Print()), (IScope)env);
             return new NoopForm(signature.Car);
         }
 
@@ -1141,6 +1176,12 @@ namespace Metarx
             env.Add(variableName);
             _var = (VariableReference)variableName.Compile(env);
             _form = exp.Compile(env);
+            var form = _form as LambdaForm;
+            if (form != null)
+            {
+                var lambda = form;
+                lambda.Name = _name.Print();
+            }
         }
 
         public override SExpression Evaluate(IScope env, bool isTail)
@@ -1441,7 +1482,6 @@ namespace Metarx
             var paramExp = Expression.Parameter(elemType, "it");
             var bodyExp = GetRealBody(proc, paramExp);
 
-            // Func<object, Tuple<string, string>>
             Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(object));
             var selectLambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
             var selectLambda = selectLambdaExp.Compile();
@@ -1454,7 +1494,18 @@ namespace Metarx
             return new LiteralExpression(resultStream);
         }
 
-        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp)
+        public static ConsCell CreateArgCells(IEnumerable<object> values)
+        {
+            ConsCell cell = Nil.Instance;
+            foreach (var val in values)
+            {
+                cell = new ConsCellImpl(new LiteralExpression(val), cell);
+            }
+
+            return cell;
+        }
+
+        private Expression GetRealBodySet(Procedure proc, ParameterExpression paramExp)
         {
             var currentScopeExp = Expression.Constant(proc.Scope);
             var scopeSizeExp = Expression.Constant(proc.ScopeSize);
@@ -1466,11 +1517,17 @@ namespace Metarx
             // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
             var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
             var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
- 
+
             // Wrap paramExp in Literal? Yes?
             var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
             var litExpCtorExp = Expression.New(litExpCtor, paramExp);
             // Add parameter to scope.
+
+            var formals = proc.Formals;
+            // Instead of Set(n, ...)
+            //ConsCell args = EvaluateAll(callEnv, pcf._operands, pcf._rest);
+            //scope.AddArguments(args, proc.Formals);
+
 
             var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
             var zeroExp = Expression.Constant(0);
@@ -1491,11 +1548,84 @@ namespace Metarx
             // Unwrap literal.
             var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
             var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
+
+            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
+
+            var bodyExp = Expression.Block(new[] { procScopeVarExp },
+                assignProcScopeExp, litExpCtorExp, setCallExp, atomResultExp);
+            return bodyExp;
+        }
+
+
+        private Expression GetRealBody(Procedure proc, params ParameterExpression[] paramExpArray)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+            var formalsExp = Expression.Constant(proc.Formals);
+            var nilExp = Expression.Constant(Nil.Instance);
+
+            var scopeCtor = typeof(Scope).GetConstructors().First();
+            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
+            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
+
+            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
+
+            // Assign to variable: ConsCell cell = Nil.Instance;
+            var cellVarExp = Expression.Variable(typeof(ConsCell), "cell");
+            var assignCellExp = Expression.Assign(cellVarExp, nilExp);
+            
+            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
+            var cellCtor = typeof(ConsCellImpl).GetConstructors().First(c => c.GetParameters().Count() == 2);
+
+            var assignments = paramExpArray
+                .Select(pe => Expression.New(litExpCtor, pe))
+                .Select(litExpCtorExp => Expression.Assign(cellVarExp, Expression.New(cellCtor, litExpCtorExp, cellVarExp)))
+                .ToList();
+
+            var assignBlockExp = Expression.Block(assignments);
+
+            //ConsCell cell = Nil.Instance;
+            //foreach (var val in values)
+            //{
+            //    cell = new ConsCellImpl(new LiteralExpression(val), cell);
+            //
+            //
+
+            // Call: procScope.AddArguments(args, proc.Formals);
+            var callAddArgsExp = Expression.Call(
+                procScopeVarExp,
+                typeof(Scope).GetMethods().First(m => m.Name == "AddArguments"),
+                cellVarExp,
+                formalsExp);
+
+            // Call procedure: proc.Evaluate(procScope);
+            var procExp = Expression.Constant(proc);
+            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
+            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
+
+            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
+
+            var tailEvalMethod =
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
+
+            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
+
+            // Unwrap literal.
+            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
+            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
             
             var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
 
-            var bodyExp = Expression.Block(new [] { procScopeVarExp }, 
-                assignProcScopeExp, litExpCtorExp, setCallExp, atomResultExp);
+            var bodyExp = Expression.Block(
+                new [] { procScopeVarExp, cellVarExp }, 
+                assignProcScopeExp,
+                assignCellExp,
+                assignBlockExp,
+                callAddArgsExp, 
+                atomResultExp);
+            
             return bodyExp;
         }
 
@@ -1510,7 +1640,6 @@ namespace Metarx
             var s = env.Symbols;
             return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
         }
-        
     }
 
     class RxWhereProcedure : NativeProcedure
@@ -1532,7 +1661,6 @@ namespace Metarx
             var paramExp = Expression.Parameter(elemType, "it");
             var bodyExp = GetRealBody(proc, paramExp);
 
-            // Func<bool, Tuple<string, string>>
             Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(bool));
             var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
             var lambda = lambdaExp.Compile();
@@ -2042,7 +2170,6 @@ namespace Metarx
 
     public abstract class InvokeMethodProcedure : NativeProcedure
     {
-
         private readonly Symbol _false;
         private readonly Symbol _true;
 
@@ -2158,6 +2285,8 @@ namespace Metarx
         SExpression Formals { get; }
 
         int ScopeSize { get; }
+
+        string Name { get; }
     }
 
     public interface IScope
@@ -2210,12 +2339,16 @@ namespace Metarx
 
         public LambdaForm(SExpression formals, ConsCell forms, IEnvironment env)
         {
+            // TODO: Could I get a name for this thing?
             _formals = formals;
             var newEnv = new ChainedEnvironment(env);
             AddParameters(newEnv);
             _forms = forms.CompileAll(newEnv);
             _scopeSize = newEnv.ScopeSize();
+            Name = "Anonymous";
         }
+
+        public string Name { get; set; }
 
         private void AddParameters(IEnvironment env)
         {
@@ -2230,12 +2363,12 @@ namespace Metarx
 
         public override SExpression Evaluate(IScope env, bool isTail)
         {
-            return new Procedure(env, _formals, _forms, _scopeSize);
+            return new Procedure(env, _formals, _forms, _scopeSize, Name);
         }
 
-        public SExpression MakeMacro(IScope env)
+        public SExpression MakeMacro(IScope env, string name)
         {
-            return new Macro(env, _formals, _forms, _scopeSize);
+            return new Macro(env, _formals, _forms, _scopeSize, name);
         }
     }
 
@@ -2303,7 +2436,7 @@ namespace Metarx
 
     class Macro : Procedure
     {
-        public Macro(IScope env, SExpression formals, CompiledForm[] forms, int scopeSize) : base(env, formals, forms, scopeSize) { }
+        public Macro(IScope env, SExpression formals, CompiledForm[] forms, int scopeSize, string name) : base(env, formals, forms, scopeSize, name) { }
 
         public override SExpression Evaluate(IScope env)
         {
@@ -2458,6 +2591,14 @@ namespace Metarx
         public int ScopeSize
         {
             get { return _scopeSize; }
+        }
+
+        public string Name
+        {
+            get
+            {
+                return "Native";
+            }
         }
 
         public IEnvironment StaticEnvironment
@@ -2715,7 +2856,9 @@ namespace Metarx
 
         public int ScopeSize { get; private set; }
 
-        public Procedure(IScope scope, SExpression formals, CompiledForm[] forms, int scopeSize)
+        public string Name { get; set; }
+
+        public Procedure(IScope scope, SExpression formals, CompiledForm[] forms, int scopeSize, string name = null)
         {
             // TODO: For debugging, it might be nice if named procedures included a name.
             // TODO: Anonymous procedures could be named, well, anonymous.
@@ -2723,6 +2866,7 @@ namespace Metarx
             _formals = formals;
             _forms = forms;
             ScopeSize = scopeSize;
+            Name = name ?? "Anonymous";
         }
 
         public SExpression Formals

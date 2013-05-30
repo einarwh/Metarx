@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
@@ -8,7 +7,7 @@ using System.Reflection;
 using Roslyn.Compilers;
 using Roslyn.Compilers.CSharp;
 
-namespace Metarx
+namespace Metarx.Core
 {
     public static class Rose
     {

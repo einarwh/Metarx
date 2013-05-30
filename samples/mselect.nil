@@ -1,0 +1,2 @@
+(define (execute stream)
+  (rx-select (method get_Item2) stream))
