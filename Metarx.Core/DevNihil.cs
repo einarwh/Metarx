@@ -18,12 +18,6 @@ namespace Metarx.Core
         {
             _procedureName = procedureName;
             _env = new ChainedEnvironment(baseEnv);
-            //var lispProcs = GetLispProcs();
-            //foreach (string p in lispProcs)
-            //{
-            //    _evaluator.Evaluate(_reader.Read(p, _evaluator.Environment));
-            //}            
-
         }
 
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
@@ -1466,6 +1460,114 @@ namespace Metarx.Core
         }
     }
 
+    class RxMapProcedure : NativeProcedure
+    {
+        public RxMapProcedure(IEnvironment env)
+            : base(env)
+        {
+            
+        }
+
+        public override SExpression Evaluate(IScope evalScope)
+        {
+            var proc = (Procedure)evalScope.Get(0);
+            var stream = GetAtom(evalScope, 1);
+            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
+
+            var paramExp = Expression.Parameter(elemType, "it");
+            var bodyExp = GetRealBody(proc, paramExp);
+
+            var basicFuncType = typeof(Func<,>);
+            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(object));
+            var selectLambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
+            var selectLambda = selectLambdaExp.Compile();
+            var selectors = typeof(Observable).GetMethods().Where(m => m.Name == "Select").ToArray();
+            var firstSel = selectors.First();
+
+            var selectorMethod = firstSel.MakeGenericMethod(elemType, typeof(object));
+            var resultStream = selectorMethod.Invoke(null, new[] { stream, selectLambda });
+
+            return new LiteralExpression(resultStream);
+        }
+
+        private Expression GetRealBody(Procedure proc, params ParameterExpression[] paramExpArray)
+        {
+            var currentScopeExp = Expression.Constant(proc.Scope);
+            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+            var formalsExp = Expression.Constant(proc.Formals);
+            var nilExp = Expression.Constant(Nil.Instance);
+
+            var scopeCtor = typeof(Scope).GetConstructors().First();
+            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
+            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
+
+            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
+            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
+            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
+
+            // Assign to variable: ConsCell cell = Nil.Instance;
+            var cellVarExp = Expression.Variable(typeof(ConsCell), "cell");
+            var assignCellExp = Expression.Assign(cellVarExp, nilExp);
+
+            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
+            var cellCtor = typeof(ConsCellImpl).GetConstructors().First(c => c.GetParameters().Count() == 2);
+
+            var assignments = paramExpArray
+                .Select(pe => Expression.New(litExpCtor, pe))
+                .Select(litExpCtorExp => Expression.Assign(cellVarExp, Expression.New(cellCtor, litExpCtorExp, cellVarExp)))
+                .ToList();
+
+            var assignBlockExp = Expression.Block(assignments);
+
+            // Call: procScope.AddArguments(args, proc.Formals);
+            var callAddArgsExp = Expression.Call(
+                procScopeVarExp,
+                typeof(Scope).GetMethods().First(m => m.Name == "AddArguments"),
+                cellVarExp,
+                formalsExp);
+
+            // Call procedure: proc.Evaluate(procScope);
+            var procExp = Expression.Constant(proc);
+            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
+            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
+
+            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
+
+            var tailEvalMethod =
+                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
+
+            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
+
+            // Unwrap literal.
+            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
+            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
+
+            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
+
+            var bodyExp = Expression.Block(
+                new[] { procScopeVarExp, cellVarExp },
+                assignProcScopeExp,
+                assignCellExp,
+                assignBlockExp,
+                callAddArgsExp,
+                atomResultExp);
+
+            return bodyExp;
+        }
+
+        private object GetAtom(IScope env, int i)
+        {
+            var atom = ((AtomExpression)env.Get(i)).Atom;
+            return atom;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            var s = env.Symbols;
+            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
+        }
+    }
+
     class RxSelectProcedure : NativeProcedure
     {
         public RxSelectProcedure(IEnvironment env)
@@ -1493,69 +1595,6 @@ namespace Metarx.Core
 
             return new LiteralExpression(resultStream);
         }
-
-        public static ConsCell CreateArgCells(IEnumerable<object> values)
-        {
-            ConsCell cell = Nil.Instance;
-            foreach (var val in values)
-            {
-                cell = new ConsCellImpl(new LiteralExpression(val), cell);
-            }
-
-            return cell;
-        }
-
-        private Expression GetRealBodySet(Procedure proc, ParameterExpression paramExp)
-        {
-            var currentScopeExp = Expression.Constant(proc.Scope);
-            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
-
-            var scopeCtor = typeof(Scope).GetConstructors().First();
-            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
-            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
-
-            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
-            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
-            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
-
-            // Wrap paramExp in Literal? Yes?
-            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
-            var litExpCtorExp = Expression.New(litExpCtor, paramExp);
-            // Add parameter to scope.
-
-            var formals = proc.Formals;
-            // Instead of Set(n, ...)
-            //ConsCell args = EvaluateAll(callEnv, pcf._operands, pcf._rest);
-            //scope.AddArguments(args, proc.Formals);
-
-
-            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
-            var zeroExp = Expression.Constant(0);
-            var setCallExp = Expression.Call(procScopeVarExp, setMethod, zeroExp, litExpCtorExp);
-
-            // Call procedure: proc.Evaluate(procScope);
-            var procExp = Expression.Constant(proc);
-            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
-            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
-
-            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
-
-            var tailEvalMethod =
-                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
-
-            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
-
-            // Unwrap literal.
-            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
-            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
-
-            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
-
-            var bodyExp = Expression.Block(new[] { procScopeVarExp },
-                assignProcScopeExp, litExpCtorExp, setCallExp, atomResultExp);
-            return bodyExp;
-        }
-
 
         private Expression GetRealBody(Procedure proc, params ParameterExpression[] paramExpArray)
         {
@@ -1585,13 +1624,6 @@ namespace Metarx.Core
                 .ToList();
 
             var assignBlockExp = Expression.Block(assignments);
-
-            //ConsCell cell = Nil.Instance;
-            //foreach (var val in values)
-            //{
-            //    cell = new ConsCellImpl(new LiteralExpression(val), cell);
-            //
-            //
 
             // Call: procScope.AddArguments(args, proc.Formals);
             var callAddArgsExp = Expression.Call(
@@ -1736,28 +1768,77 @@ namespace Metarx.Core
         {
         }
 
+        private IEnumerable<object> GetStreams(IScope scope, int scopeSize)
+        {
+            var streams = new List<object>();
+            for (int i = 1; i <= scopeSize; i++)
+            {
+                var stream = GetAtom(scope, i);
+                streams.Add(stream);
+            }
+            return streams;
+        } 
+
         public override SExpression Evaluate(IScope evalScope)
         {
             var proc = (Procedure)evalScope.Get(0);
-            var stream1 = GetAtom(evalScope, 1);
-            var stream2 = GetAtom(evalScope, 2);
-            Type elemType1 = stream1.GetType().BaseType.GetGenericArguments().First();
-            Type elemType2 = stream2.GetType().BaseType.GetGenericArguments().First();
+            var streams = GetStreams(evalScope, proc.ScopeSize).ToList();
+            var elemTypes = streams.Select(s => s.GetType().BaseType.GetGenericArguments().First()).ToList();
+            var paramExps = elemTypes.Select(Expression.Parameter).ToList();
 
-            var paramExp1 = Expression.Parameter(elemType1, "x");
-            var paramExp2 = Expression.Parameter(elemType2, "y");
-            var bodyExp = GetRealBody(proc, paramExp1, paramExp2);
+            var bodyExp = GetRealBody(proc, paramExps);
 
             // Func<Foo, Bar, object>
-            Type funcType = typeof(Func<,,>).MakeGenericType(elemType1, elemType2, typeof(object));
-            var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp1, paramExp2);
+            var typeArgs = GetTypeArguments(elemTypes);
+            Type funcType = GetFuncType(proc.ScopeSize).MakeGenericType(typeArgs);
+            var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExps);
             var lambda = lambdaExp.Compile();
 
-            var method = GetMethodTemplate().MakeGenericMethod(elemType1, elemType2, typeof(object));
+            var method = GetMethodTemplate().MakeGenericMethod(typeArgs);
 
-            var resultStream = method.Invoke(null, new[] { stream1, stream2, lambda });
+            var invokeArgs = new List<object>(streams) { lambda }.ToArray();
+            var resultStream = method.Invoke(null, invokeArgs);
 
             return new LiteralExpression(resultStream);
+        }
+
+        private Type GetFuncType(int scopeSize)
+        {
+            switch (scopeSize)
+            {
+                case 1:
+                    return typeof(Func<,>);
+                case 2:
+                    return typeof(Func<,,>);
+                case 3:
+                    return typeof(Func<,,,>);
+                case 4:
+                    return typeof(Func<,,,,>);
+                case 5:
+                    return typeof(Func<,,,,,>);
+                case 6:
+                    return typeof(Func<,,,,,,>);
+                case 7:
+                    return typeof(Func<,,,,,,,>);
+                case 8:
+                    return typeof(Func<,,,,,,,,>);
+                case 9:
+                    return typeof(Func<,,,,,,,,,>);
+                case 10:
+                    return typeof(Func<,,,,,,,,,,>);
+                case 11:
+                    return typeof(Func<,,,,,,,,,,,>);
+                case 12:
+                    return typeof(Func<,,,,,,,,,,,,>);
+                default:
+                    throw new Exception("scopeSize too large! " + scopeSize);
+            }
+        }
+
+        private Type[] GetTypeArguments(IEnumerable<Type> elemTypes)
+        {
+            var list = new List<Type>(elemTypes) { typeof(object) };
+            return list.ToArray();
         }
 
         private object GetAtom(IScope env, int i)
@@ -1774,8 +1855,12 @@ namespace Metarx.Core
 
         protected abstract MethodInfo GetMethodTemplate();
 
-        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp0, ParameterExpression paramExp1)
+        private Expression GetRealBody(Procedure proc, IEnumerable<ParameterExpression> paramExps)
         {
+            var paramList = paramExps.ToList();
+            var paramExp0 = paramList[0];
+            var paramExp1 = paramList[1];
+            
             var currentScopeExp = Expression.Constant(proc.Scope);
             var scopeSizeExp = Expression.Constant(proc.ScopeSize);
 
