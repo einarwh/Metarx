@@ -624,8 +624,8 @@ namespace Metarx.Core
             while (!(c is Nil))
             {
                 var clauseCell = (ConsCell)c.Car;
-                if (clauseCell.Car == env.Symbols.Else) _clauses[i] = new CompiledForm[] { clauseCell.Next.Car.Compile(env) };
-                else _clauses[i] = new CompiledForm[] { clauseCell.Car.Compile(env), clauseCell.Next.Car.Compile(env) };
+                if (clauseCell.Car == env.Symbols.Else) _clauses[i] = new[] { clauseCell.Next.Car.Compile(env) };
+                else _clauses[i] = new[] { clauseCell.Car.Compile(env), clauseCell.Next.Car.Compile(env) };
                 c = c.Next;
                 i++;
             }
@@ -1082,34 +1082,16 @@ namespace Metarx.Core
 
     public class ConsProcedure : NativeProcedure
     {
-        public ConsProcedure(IEnvironment env) : base(env) { }
-
-        public override SExpression Evaluate(IScope env)
-        {
-            var cell1 = env.Get(0);
-            var cell2 = env.Get(1);
-            return new ConsCellImpl(cell1, cell2);
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            return env.Symbols.XYArgs;
-        }
-    }
-
-    class CreateMatrixProcedure : NativeProcedure
-    {
-        public CreateMatrixProcedure(IEnvironment env)
+        public ConsProcedure(IEnvironment env)
             : base(env)
         {
         }
 
         public override SExpression Evaluate(IScope env)
         {
-            int columns = (int)((AtomExpression)env.Get(0)).Atom;
-            int rows = (int)((AtomExpression)env.Get(1)).Atom;
-            var matrix = new Matrix(columns, rows);
-            return new LiteralExpression(matrix);
+            var cell1 = env.Get(0);
+            var cell2 = env.Get(1);
+            return new ConsCellImpl(cell1, cell2);
         }
 
         public override SExpression CreateFormals(IEnvironment env)
@@ -1375,11 +1357,6 @@ namespace Metarx.Core
             env.Add("new", new InvokeCtorProcedure(env));
             env.Add("invoke-instance", new InvokeInstanceMethodProcedure(env));
             env.Add("invoke-static", new InvokeStaticMethodProcedure(env));
-            env.Add("create-matrix", new CreateMatrixProcedure(env));
-            env.Add("init-matrix", new InitMatrixProcedure(env));
-            env.Add("get-cell", new GetMatrixCellProcedure(env));
-            env.Add("set-cell", new SetMatrixCellProcedure(env));
-            env.Add("is-cell?", new IsMatrixCellProcedure(env));
             env.Add("gensym", new GensymProcedure(env));
             env.Add("str", new StringProcedure(env));
             env.Add("rx-select", new RxSelectProcedure(env));
@@ -1457,220 +1434,6 @@ namespace Metarx.Core
         {
             var name = (string)((AtomExpression)env.Get(0)).Atom;
             return new Symbol("gen:" + name);
-        }
-    }
-
-    class RxMapProcedure : NativeProcedure
-    {
-        public RxMapProcedure(IEnvironment env)
-            : base(env)
-        {
-            
-        }
-
-        public override SExpression Evaluate(IScope evalScope)
-        {
-            var proc = (Procedure)evalScope.Get(0);
-            var stream = GetAtom(evalScope, 1);
-            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
-
-            var paramExp = Expression.Parameter(elemType, "it");
-            var bodyExp = GetRealBody(proc, paramExp);
-
-            var basicFuncType = typeof(Func<,>);
-            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(object));
-            var selectLambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
-            var selectLambda = selectLambdaExp.Compile();
-            var selectors = typeof(Observable).GetMethods().Where(m => m.Name == "Select").ToArray();
-            var firstSel = selectors.First();
-
-            var selectorMethod = firstSel.MakeGenericMethod(elemType, typeof(object));
-            var resultStream = selectorMethod.Invoke(null, new[] { stream, selectLambda });
-
-            return new LiteralExpression(resultStream);
-        }
-
-        private Expression GetRealBody(Procedure proc, params ParameterExpression[] paramExpArray)
-        {
-            var currentScopeExp = Expression.Constant(proc.Scope);
-            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
-            var formalsExp = Expression.Constant(proc.Formals);
-            var nilExp = Expression.Constant(Nil.Instance);
-
-            var scopeCtor = typeof(Scope).GetConstructors().First();
-            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
-            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
-
-            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
-            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
-            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
-
-            // Assign to variable: ConsCell cell = Nil.Instance;
-            var cellVarExp = Expression.Variable(typeof(ConsCell), "cell");
-            var assignCellExp = Expression.Assign(cellVarExp, nilExp);
-
-            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
-            var cellCtor = typeof(ConsCellImpl).GetConstructors().First(c => c.GetParameters().Count() == 2);
-
-            var assignments = paramExpArray
-                .Select(pe => Expression.New(litExpCtor, pe))
-                .Select(litExpCtorExp => Expression.Assign(cellVarExp, Expression.New(cellCtor, litExpCtorExp, cellVarExp)))
-                .ToList();
-
-            var assignBlockExp = Expression.Block(assignments);
-
-            // Call: procScope.AddArguments(args, proc.Formals);
-            var callAddArgsExp = Expression.Call(
-                procScopeVarExp,
-                typeof(Scope).GetMethods().First(m => m.Name == "AddArguments"),
-                cellVarExp,
-                formalsExp);
-
-            // Call procedure: proc.Evaluate(procScope);
-            var procExp = Expression.Constant(proc);
-            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
-            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
-
-            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
-
-            var tailEvalMethod =
-                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
-
-            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
-
-            // Unwrap literal.
-            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
-            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
-
-            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
-
-            var bodyExp = Expression.Block(
-                new[] { procScopeVarExp, cellVarExp },
-                assignProcScopeExp,
-                assignCellExp,
-                assignBlockExp,
-                callAddArgsExp,
-                atomResultExp);
-
-            return bodyExp;
-        }
-
-        private object GetAtom(IScope env, int i)
-        {
-            var atom = ((AtomExpression)env.Get(i)).Atom;
-            return atom;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
-        }
-    }
-
-    class RxSelectProcedure : NativeProcedure
-    {
-        public RxSelectProcedure(IEnvironment env)
-            : base(env)
-        {
-        }
-
-        public override SExpression Evaluate(IScope evalScope)
-        {
-            var proc = (Procedure)evalScope.Get(0);
-            var stream = GetAtom(evalScope, 1);
-            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
-
-            var paramExp = Expression.Parameter(elemType, "it");
-            var bodyExp = GetRealBody(proc, paramExp);
-
-            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(object));
-            var selectLambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
-            var selectLambda = selectLambdaExp.Compile();
-            var selectors = typeof(Observable).GetMethods().Where(m => m.Name == "Select").ToArray();
-            var firstSel = selectors.First();
-
-            var selectorMethod = firstSel.MakeGenericMethod(elemType, typeof(object));
-            var resultStream = selectorMethod.Invoke(null, new [] { stream, selectLambda } );
-
-            return new LiteralExpression(resultStream);
-        }
-
-        private Expression GetRealBody(Procedure proc, params ParameterExpression[] paramExpArray)
-        {
-            var currentScopeExp = Expression.Constant(proc.Scope);
-            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
-            var formalsExp = Expression.Constant(proc.Formals);
-            var nilExp = Expression.Constant(Nil.Instance);
-
-            var scopeCtor = typeof(Scope).GetConstructors().First();
-            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
-            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
-
-            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
-            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
-            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
-
-            // Assign to variable: ConsCell cell = Nil.Instance;
-            var cellVarExp = Expression.Variable(typeof(ConsCell), "cell");
-            var assignCellExp = Expression.Assign(cellVarExp, nilExp);
-            
-            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
-            var cellCtor = typeof(ConsCellImpl).GetConstructors().First(c => c.GetParameters().Count() == 2);
-
-            var assignments = paramExpArray
-                .Select(pe => Expression.New(litExpCtor, pe))
-                .Select(litExpCtorExp => Expression.Assign(cellVarExp, Expression.New(cellCtor, litExpCtorExp, cellVarExp)))
-                .ToList();
-
-            var assignBlockExp = Expression.Block(assignments);
-
-            // Call: procScope.AddArguments(args, proc.Formals);
-            var callAddArgsExp = Expression.Call(
-                procScopeVarExp,
-                typeof(Scope).GetMethods().First(m => m.Name == "AddArguments"),
-                cellVarExp,
-                formalsExp);
-
-            // Call procedure: proc.Evaluate(procScope);
-            var procExp = Expression.Constant(proc);
-            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
-            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
-
-            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
-
-            var tailEvalMethod =
-                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
-
-            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
-
-            // Unwrap literal.
-            var convertedResultExp = Expression.Convert(evalTailCallExp, typeof(LiteralExpression));
-            var getAtomMethod = typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom");
-            
-            var atomResultExp = Expression.Call(convertedResultExp, getAtomMethod);
-
-            var bodyExp = Expression.Block(
-                new [] { procScopeVarExp, cellVarExp }, 
-                assignProcScopeExp,
-                assignCellExp,
-                assignBlockExp,
-                callAddArgsExp, 
-                atomResultExp);
-            
-            return bodyExp;
-        }
-
-        private object GetAtom(IScope env, int i)
-        {
-            var atom = ((AtomExpression)env.Get(i)).Atom;
-            return atom;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
         }
     }
 
@@ -1761,28 +1524,44 @@ namespace Metarx.Core
         }
     }
 
-    abstract class RxPairwiseProcedure : NativeProcedure
+    abstract class RxMapProcedure : NativeProcedure
     {
-        protected RxPairwiseProcedure(IEnvironment env)
+        protected RxMapProcedure(IEnvironment env)
             : base(env)
         {
         }
 
-        private IEnumerable<object> GetStreams(IScope scope, int scopeSize)
+        public override string Name
+        {
+            get
+            {
+                return base.Name + ":Rx:" + RxMethodName;
+            }
+        }
+
+        protected abstract string RxMethodName { get; }
+
+        private static IEnumerable<object> GetStreams(IScope scope)
         {
             var streams = new List<object>();
-            for (int i = 1; i <= scopeSize; i++)
+            var cell = (ConsCell) scope.Get(1);
+            while (!cell.IsNil())
             {
-                var stream = GetAtom(scope, i);
-                streams.Add(stream);
+                var c = cell.Car;
+                var atomExp = (AtomExpression)c;
+                var atom = atomExp.Atom;
+                streams.Add(atom);
+                cell = cell.Next;
             }
+
             return streams;
         } 
 
         public override SExpression Evaluate(IScope evalScope)
         {
             var proc = (Procedure)evalScope.Get(0);
-            var streams = GetStreams(evalScope, proc.ScopeSize).ToList();
+            var streams = GetStreams(evalScope).ToList();
+            var streamCount = streams.Count();
             var elemTypes = streams.Select(s => s.GetType().BaseType.GetGenericArguments().First()).ToList();
             var paramExps = elemTypes.Select(Expression.Parameter).ToList();
 
@@ -1790,11 +1569,11 @@ namespace Metarx.Core
 
             // Func<Foo, Bar, object>
             var typeArgs = GetTypeArguments(elemTypes);
-            Type funcType = GetFuncType(proc.ScopeSize).MakeGenericType(typeArgs);
+            Type funcType = GetFuncType(streamCount).MakeGenericType(typeArgs);
             var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExps);
             var lambda = lambdaExp.Compile();
 
-            var method = GetMethodTemplate().MakeGenericMethod(typeArgs);
+            var method = GetMethodTemplate(streamCount).MakeGenericMethod(typeArgs);
 
             var invokeArgs = new List<object>(streams) { lambda }.ToArray();
             var resultStream = method.Invoke(null, invokeArgs);
@@ -1802,7 +1581,7 @@ namespace Metarx.Core
             return new LiteralExpression(resultStream);
         }
 
-        private Type GetFuncType(int scopeSize)
+        private static Type GetFuncType(int scopeSize)
         {
             switch (scopeSize)
             {
@@ -1835,34 +1614,52 @@ namespace Metarx.Core
             }
         }
 
-        private Type[] GetTypeArguments(IEnumerable<Type> elemTypes)
+        private static Type[] GetTypeArguments(IEnumerable<Type> elemTypes)
         {
             var list = new List<Type>(elemTypes) { typeof(object) };
             return list.ToArray();
         }
 
-        private object GetAtom(IScope env, int i)
-        {
-            var atom = ((AtomExpression)env.Get(i)).Atom;
-            return atom;
-        }
-
         public override SExpression CreateFormals(IEnvironment env)
         {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"), s.GetSymbol("y"));
+            Symbols symbols = env.Symbols;
+            return ConsCell.ImproperList(symbols.GetSymbol("type"), symbols.Args);
         }
 
-        protected abstract MethodInfo GetMethodTemplate();
+        private MethodInfo GetMethodTemplate(int streamCount)
+        {
+            Predicate<ParameterInfo> paramCheck =
+                p => p.ParameterType.GetGenericTypeDefinition() == typeof(IObservable<>);
+
+            int paramCount = streamCount + 1;
+
+            var methods = typeof(Observable)
+                .GetMethods()
+                .Where(m => m.Name == RxMethodName && m.GetParameters().Count() == paramCount)
+                .Where(m =>
+                {
+                    var ps = m.GetParameters();
+                    for (int i = 0; i < ps.Length - 1; i++)
+                    {
+                        if (!paramCheck(ps[0]))
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+
+            var method = methods.First();
+
+            return method;
+        }
 
         private Expression GetRealBody(Procedure proc, IEnumerable<ParameterExpression> paramExps)
         {
-            var paramList = paramExps.ToList();
-            var paramExp0 = paramList[0];
-            var paramExp1 = paramList[1];
-            
             var currentScopeExp = Expression.Constant(proc.Scope);
             var scopeSizeExp = Expression.Constant(proc.ScopeSize);
+            var formalsExp = Expression.Constant(proc.Formals);
+            var nilExp = Expression.Constant(Nil.Instance);
 
             // Create variable for new scope.
             var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
@@ -1873,21 +1670,27 @@ namespace Metarx.Core
                     currentScopeExp,
                     scopeSizeExp));
 
-            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
+            // Assign to variable: ConsCell cell = Nil.Instance;
+            var cellVarExp = Expression.Variable(typeof(ConsCell), "cell");
+            var assignCellExp = Expression.Assign(cellVarExp, nilExp);
 
-            // procScope.Set(0, paramExp0);
-            var setZeroCallExp = Expression.Call(
-                procScopeVarExp,
-                setMethod,
-                Expression.Constant(0),
-                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp0));
+            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
+            var cellCtor = typeof(ConsCellImpl).GetConstructors().First(c => c.GetParameters().Count() == 2);
 
-            // procScope.Set(1, paramExp1);
-            var setOneCallExp = Expression.Call(
+            var assignments = paramExps
+                .Reverse()
+                .Select(pe => Expression.New(litExpCtor, pe))
+                .Select(litExpCtorExp => Expression.Assign(cellVarExp, Expression.New(cellCtor, litExpCtorExp, cellVarExp)))
+                .ToList();
+
+            var assignBlockExp = Expression.Block(assignments);
+
+            // Call: procScope.AddArguments(args, proc.Formals);
+            var callAddArgsExp = Expression.Call(
                 procScopeVarExp,
-                setMethod,
-                Expression.Constant(1),
-                Expression.New(typeof(LiteralExpression).GetConstructors().First(), paramExp1));
+                typeof(Scope).GetMethods().First(m => m.Name == "AddArguments"),
+                cellVarExp,
+                formalsExp);
 
             // Call procedure (which involves evaluating tail call as well): 
             // proc.Evaluate(procScope);
@@ -1904,98 +1707,62 @@ namespace Metarx.Core
                 typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom"));
 
             var bodyExp = Expression.Block(
-                new[] { procScopeVarExp },
+                new[] { procScopeVarExp, cellVarExp },
                 assignProcScopeExp,
-                setZeroCallExp,
-                setOneCallExp,
+                assignCellExp,
+                assignBlockExp,
+                callAddArgsExp,
                 atomResultExp);
 
             return bodyExp;
         }
     }
 
-    class RxZipProcedure : RxPairwiseProcedure
+    class RxSelectProcedure : RxMapProcedure
+    {
+        public RxSelectProcedure(IEnvironment env)
+            : base(env)
+        {
+        }
+
+        protected override string RxMethodName
+        {
+            get
+            {
+                return "Select";
+            }
+        }
+    }
+
+    class RxZipProcedure : RxMapProcedure
     {
         public RxZipProcedure(IEnvironment env)
             : base(env)
         {
         }
 
-        protected override MethodInfo GetMethodTemplate()
+        protected override string RxMethodName
         {
-            Predicate<ParameterInfo> paramCheck =
-                p => p.ParameterType.GetGenericTypeDefinition() == typeof(IObservable<>);
-
-            var zippers = typeof(Observable)
-                .GetMethods()
-                .Where(m => m.Name == "Zip" && m.GetParameters().Count() == 3)
-                .Where(m =>
-                {
-                    var ps = m.GetParameters();
-                    var result = paramCheck(ps[0]) && paramCheck(ps[1]);
-                    return result;
-                });
-
-            var zipMethod = zippers.First();
-
-            return zipMethod;
+            get
+            {
+                return "Zip";
+            }
         }
     }
 
-    class RxCombineLatestProcedure : RxPairwiseProcedure
+    class RxCombineLatestProcedure : RxMapProcedure
     {
         public RxCombineLatestProcedure(IEnvironment env)
             : base(env)
         {
         }
 
-        protected override MethodInfo GetMethodTemplate()
+        protected override string RxMethodName
         {
-            Predicate<ParameterInfo> paramCheck =
-                p => p.ParameterType.GetGenericTypeDefinition() == typeof(IObservable<>);
-
-            var methods = typeof(Observable)
-                .GetMethods()
-                .Where(m => m.Name == "CombineLatest" && m.GetParameters().Count() == 3)
-                .Where(m =>
-                {
-                    var ps = m.GetParameters();
-                    var result = paramCheck(ps[0]) && paramCheck(ps[1]);
-                    return result;
-                });
-
-            var method = methods.First();
-
-            return method;
-        }
-    }
-
-    class GetMatrixCellProcedure : NativeProcedure
-    {
-        public GetMatrixCellProcedure(IEnvironment env)
-            : base(env)
-        {
-        }
-
-        public override SExpression Evaluate(IScope env)
-        {
-            var matrix = (Matrix)GetAtom(env, 0);
-            var x = (int)GetAtom(env, 1);
-            var y = (int)GetAtom(env, 2);
-            var cell = matrix.GetCell(x, y);
-            return new LiteralExpression(cell);
-        }
-
-        private object GetAtom(IScope env, int i)
-        {
-            var atom = ((AtomExpression)env.Get(i)).Atom;
-            return atom;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("m"), s.X, s.Y);
+            get
+            {
+                return "CombineLatest";
+            }
         }
     }
 
@@ -2136,29 +1903,6 @@ namespace Metarx.Core
             return ++val;
         }
 
-    }
-
-    class InitMatrixProcedure : NativeProcedure
-    {
-        public InitMatrixProcedure(IEnvironment env)
-            : base(env)
-        {
-        }
-
-        public override SExpression Evaluate(IScope env)
-        {
-            var matrixExp = (AtomExpression)env.Get(0);
-            var matrix = (Matrix)matrixExp.Atom;
-            var value = ((AtomExpression)env.Get(1)).Atom;
-            matrix.InitCells(value);
-            return matrixExp;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("m"), s.GetSymbol("v"));
-        }
     }
 
     public class InvokeCtorProcedure : NativeProcedure
@@ -2382,40 +2126,6 @@ namespace Metarx.Core
         void AddArguments(ConsCell args, SExpression formals);
     }
 
-    class IsMatrixCellProcedure : NativeProcedure
-    {
-
-        private readonly Symbol _false;
-        private readonly Symbol _true;
-        public IsMatrixCellProcedure(IEnvironment env)
-            : base(env)
-        {
-            _false = env.Symbols.False;
-            _true = env.Symbols.True;
-        }
-
-        public override SExpression Evaluate(IScope env)
-        {
-            var matrix = (Matrix)GetAtom(env, 0);
-            var x = (int)GetAtom(env, 1);
-            var y = (int)GetAtom(env, 2);
-            bool result = matrix.IsCell(x, y);
-            return result ? _true : _false;
-        }
-
-        private static object GetAtom(IScope env, int index)
-        {
-            var atom = ((AtomExpression)env.Get(index)).Atom;
-            return atom;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("m"), s.X, s.Y);
-        }
-    }
-
     public class LambdaForm : CompiledForm
     {
         private readonly SExpression _formals; // Needs to be all expressions with variable names.
@@ -2530,66 +2240,6 @@ namespace Metarx.Core
         }
     }
 
-    public class Matrix
-    {
-        private readonly int _columns;
-        private readonly int _rows;
-
-        private readonly object[][] _values;
-
-        public Matrix(int columns, int rows)
-        {
-            _columns = columns;
-            _rows = rows;
-            var rowArray = new object[rows][];
-            for (int i = 0; i < rows; i++)
-            {
-                rowArray[i] = new object[columns];
-            }
-            _values = rowArray;
-        }
-
-        public bool IsCell(int column, int row)
-        {
-            return column >= 0 && column < _columns && row >= 0 && row < _rows;
-        }
-
-        public object GetCell(int column, int row)
-        {
-            return _values[row][column];
-        }
-
-        public void SetCell(int column, int row, object value)
-        {
-            _values[row][column] = value;
-        }
-
-        public void InitCells(object value)
-        {
-            for (int row = 0; row < _rows; row++)
-            {
-                for (int col = 0; col < _columns; col++)
-                {
-                    _values[row][col] = value;
-                }
-            }
-        }
-
-        public override string ToString()
-        {
-            string s = "";
-            for (int row = 0; row < _rows; row++)
-            {
-                for (int col = 0; col < _columns; col++)
-                {
-                    s += " " + _values[row][col];
-                }
-                s += "\n";
-            }
-            return s;
-        }
-    }
-
     public class MihilException : Exception
     {
         public MihilException(string message) : base(message) { }
@@ -2678,7 +2328,7 @@ namespace Metarx.Core
             get { return _scopeSize; }
         }
 
-        public string Name
+        public virtual string Name
         {
             get
             {
@@ -3398,37 +3048,6 @@ namespace Metarx.Core
             return _name;
         }
 
-    }
-
-    class SetMatrixCellProcedure : NativeProcedure
-    {
-        public SetMatrixCellProcedure(IEnvironment env)
-            : base(env)
-        {
-        }
-
-        public override SExpression Evaluate(IScope env)
-        {
-            var matrix = (Matrix)GetAtom(env, 0);
-            var x = (int)GetAtom(env, 1);
-            var y = (int)GetAtom(env, 2);
-            var valueExp = (AtomExpression)env.Get(3);
-            var value = valueExp.Atom;
-            matrix.SetCell(x, y, value);
-            return valueExp;
-        }
-
-        private object GetAtom(IScope env, int index)
-        {
-            var atom = ((AtomExpression)env.Get(index)).Atom;
-            return atom;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("m"), s.X, s.Y, s.GetSymbol("v"));
-        }
     }
 
     public abstract class SExpression
