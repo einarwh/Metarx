@@ -1399,7 +1399,6 @@ namespace Metarx.Core
         {
             return Nil.Instance;
         }
-
     }
 
     public static class FormalParameters
@@ -1418,7 +1417,6 @@ namespace Metarx.Core
             }
             return cell;
         }
-
     }
 
     class GensymProcedure : NativeProcedure
@@ -1437,96 +1435,31 @@ namespace Metarx.Core
         }
     }
 
-    class RxWhereProcedure : NativeProcedure
+    abstract class RxMapProcedure : RxProcedure
     {
-        private readonly Symbol _falseSymbol;
-
-        public RxWhereProcedure(IEnvironment env)
+        protected RxMapProcedure(IEnvironment env)
             : base(env)
         {
-            _falseSymbol = env.Symbols.False;
         }
 
-        public override SExpression Evaluate(IScope evalScope)
+        protected override BlockExpression GetLambdaBody(Procedure proc, IEnumerable<ParameterExpression> paramExps)
         {
-            var proc = (Procedure)evalScope.Get(0);
-            var stream = GetAtom(evalScope, 1);
-            Type elemType = stream.GetType().BaseType.GetGenericArguments().First();
+            var data = GetLambdaBodyBlock(proc, paramExps);
 
-            var paramExp = Expression.Parameter(elemType, "it");
-            var bodyExp = GetRealBody(proc, paramExp);
+            // Unwrap atom from literalexpression:
+            var resultExp = Expression.Call(
+                Expression.Convert(data.TempLastExpression, typeof(LiteralExpression)),
+                typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom"));
 
-            Type funcType = typeof(Func<,>).MakeGenericType(elemType, typeof(bool));
-            var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExp);
-            var lambda = lambdaExp.Compile();
-            var methods = typeof(Observable).GetMethods().Where(m => m.Name == "Where").ToArray();
-            var methodTemplate = methods.First();
+            var result = data.ToBlock(resultExp);
 
-            var method = methodTemplate.MakeGenericMethod(elemType);
-            var resultStream = method.Invoke(null, new[] { stream, lambda });
-
-            return new LiteralExpression(resultStream);
-        }
-
-        private Expression GetRealBody(Procedure proc, ParameterExpression paramExp)
-        {
-            var currentScopeExp = Expression.Constant(proc.Scope);
-            var scopeSizeExp = Expression.Constant(proc.ScopeSize);
-
-            var scopeCtor = typeof(Scope).GetConstructors().First();
-            // Create new scope for proc eval: new Scope(currentScope, scopeSize);
-            var scopeCtorExp = Expression.New(scopeCtor, currentScopeExp, scopeSizeExp);
-
-            // Assign to variable: Scope procScope = new Scope(currentScope, scopeSize);
-            var procScopeVarExp = Expression.Variable(typeof(Scope), "procScope");
-            var assignProcScopeExp = Expression.Assign(procScopeVarExp, scopeCtorExp);
-
-            // Wrap paramExp in Literal? Yes?
-            var litExpCtor = typeof(LiteralExpression).GetConstructors().First();
-            var litExpCtorExp = Expression.New(litExpCtor, paramExp);
-            // Add parameter to scope.
-
-            var setMethod = typeof(Scope).GetMethods().First(m => m.Name == "Set");
-            var zeroExp = Expression.Constant(0);
-            var setCallExp = Expression.Call(procScopeVarExp, setMethod, zeroExp, litExpCtorExp);
-
-            // Call procedure: proc.Evaluate(procScope);
-            var procExp = Expression.Constant(proc);
-            var evaluateMethod = typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate");
-            var evalProcExp = Expression.Call(procExp, evaluateMethod, procScopeVarExp);
-
-            var convertExp = Expression.Convert(evalProcExp, typeof(TailCall));
-
-            var tailEvalMethod =
-                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any());
-
-            var evalTailCallExp = Expression.Call(convertExp, tailEvalMethod);
-
-            // Compare to Nihil false.
-            var equalExp = Expression.NotEqual(Expression.Constant(_falseSymbol), evalTailCallExp);
-        
-            var bodyExp = Expression.Block(new[] { procScopeVarExp },
-                assignProcScopeExp, litExpCtorExp, setCallExp, equalExp);
-
-            return bodyExp;
-        }
-
-        private object GetAtom(IScope env, int i)
-        {
-            var atom = ((AtomExpression)env.Get(i)).Atom;
-            return atom;
-        }
-
-        public override SExpression CreateFormals(IEnvironment env)
-        {
-            var s = env.Symbols;
-            return ConsCell.List(s.GetSymbol("f"), s.GetSymbol("x"));
+            return result;
         }
     }
 
-    abstract class RxMapProcedure : NativeProcedure
+    abstract class RxProcedure : NativeProcedure
     {
-        protected RxMapProcedure(IEnvironment env)
+        protected RxProcedure(IEnvironment env)
             : base(env)
         {
         }
@@ -1555,7 +1488,17 @@ namespace Metarx.Core
             }
 
             return streams;
-        } 
+        }
+
+        protected virtual Type[] GetFuncTypeArguments(IEnumerable<Type> types)
+        {
+            return new List<Type>(types) { typeof(object) }.ToArray();
+        }
+
+        protected virtual Type[] GetRxMethodTypeArguments(IEnumerable<Type> types)
+        {
+            return new List<Type>(types) { typeof(object) }.ToArray();
+        }
 
         public override SExpression Evaluate(IScope evalScope)
         {
@@ -1564,20 +1507,13 @@ namespace Metarx.Core
             var streamCount = streams.Count();
             var elemTypes = streams.Select(s => s.GetType().BaseType.GetGenericArguments().First()).ToList();
             var paramExps = elemTypes.Select(Expression.Parameter).ToList();
-
-            var bodyExp = GetRealBody(proc, paramExps);
-
-            // Func<Foo, Bar, object>
-            var typeArgs = GetTypeArguments(elemTypes);
-            Type funcType = GetFuncType(streamCount).MakeGenericType(typeArgs);
+            var bodyExp = GetLambdaBody(proc, paramExps);
+            Type funcType = GetFuncType(streamCount).MakeGenericType(GetFuncTypeArguments(elemTypes));
             var lambdaExp = Expression.Lambda(funcType, bodyExp, paramExps);
             var lambda = lambdaExp.Compile();
-
-            var method = GetMethodTemplate(streamCount).MakeGenericMethod(typeArgs);
-
+            var method = GetMethodTemplate(streamCount).MakeGenericMethod(GetRxMethodTypeArguments(elemTypes));
             var invokeArgs = new List<object>(streams) { lambda }.ToArray();
             var resultStream = method.Invoke(null, invokeArgs);
-
             return new LiteralExpression(resultStream);
         }
 
@@ -1614,12 +1550,6 @@ namespace Metarx.Core
             }
         }
 
-        private static Type[] GetTypeArguments(IEnumerable<Type> elemTypes)
-        {
-            var list = new List<Type>(elemTypes) { typeof(object) };
-            return list.ToArray();
-        }
-
         public override SExpression CreateFormals(IEnvironment env)
         {
             Symbols symbols = env.Symbols;
@@ -1654,7 +1584,9 @@ namespace Metarx.Core
             return method;
         }
 
-        private Expression GetRealBody(Procedure proc, IEnumerable<ParameterExpression> paramExps)
+        protected abstract BlockExpression GetLambdaBody(Procedure proc, IEnumerable<ParameterExpression> paramExps);
+
+        protected virtual BlockData GetLambdaBodyBlock(Procedure proc, IEnumerable<ParameterExpression> paramExps)
         {
             var currentScopeExp = Expression.Constant(proc.Scope);
             var scopeSizeExp = Expression.Constant(proc.ScopeSize);
@@ -1701,20 +1633,99 @@ namespace Metarx.Core
                     procScopeVarExp), typeof(TailCall)),
                 typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any()));
 
-            // Unwrap atom from literalexpression:
-            var atomResultExp = Expression.Call(
-                Expression.Convert(evalTailCallExp, typeof(LiteralExpression)),
-                typeof(LiteralExpression).GetMethods().First(m => m.Name == "get_Atom"));
-
-            var bodyExp = Expression.Block(
-                new[] { procScopeVarExp, cellVarExp },
-                assignProcScopeExp,
-                assignCellExp,
-                assignBlockExp,
-                callAddArgsExp,
-                atomResultExp);
+            var bodyExp = new BlockData(
+                new[] { procScopeVarExp, cellVarExp }, 
+                new List<Expression> { assignProcScopeExp, assignCellExp, assignBlockExp, callAddArgsExp }, 
+                evalTailCallExp);
 
             return bodyExp;
+        }
+    }
+
+    class BlockData
+    {
+        private readonly ParameterExpression[] _variables;
+
+        private readonly List<Expression> _expressions;
+
+        private readonly Expression _tempLastExpression;
+
+        public BlockData(ParameterExpression[] variables, List<Expression> expressions, Expression tempLastExpression)
+        {
+            _variables = variables;
+            _expressions = expressions;
+            _tempLastExpression = tempLastExpression;
+        }
+
+        public ParameterExpression[] Variables
+        {
+            get
+            {
+                return _variables;
+            }
+        }
+
+        public List<Expression> Expressions
+        {
+            get
+            {
+                return _expressions;
+            }
+        }
+ 
+        public Expression TempLastExpression
+        {
+            get
+            {
+                return _tempLastExpression;
+            }
+        }
+
+        public BlockExpression ToBlock(Expression exp)
+        {
+            _expressions.Add(exp);
+            return Expression.Block(_variables, _expressions);
+        }
+    }
+
+    class RxWhereProcedure : RxProcedure
+    {
+        private readonly Symbol _falseSymbol;
+
+        public RxWhereProcedure(IEnvironment env)
+            : base(env)
+        {
+            _falseSymbol = env.Symbols.False;
+        }
+
+        protected override string RxMethodName
+        {
+            get
+            {
+                return "Where";
+            }
+        }
+
+        protected override Type[] GetFuncTypeArguments(IEnumerable<Type> types)
+        {
+            return new List<Type>(types){ typeof(bool) }.ToArray();
+        }
+
+
+        protected override Type[] GetRxMethodTypeArguments(IEnumerable<Type> types)
+        {
+            return types.ToArray();
+        }
+
+        protected override BlockExpression GetLambdaBody(Procedure proc, IEnumerable<ParameterExpression> paramExps)
+        {
+            var data = GetLambdaBodyBlock(proc, paramExps);
+
+            // Compare to Nihil false.
+            var equalExp = Expression.NotEqual(Expression.Constant(_falseSymbol), data.TempLastExpression);
+
+            var result = data.ToBlock(equalExp);
+            return result;
         }
     }
 
