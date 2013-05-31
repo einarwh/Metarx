@@ -74,6 +74,7 @@
   <ItemGroup>
     <Compile Include="DevCombineLatest.cs" />
     <Compile Include="DevNihil.cs" />
+    <Compile Include="DroneSample.cs" />
     <Compile Include="Engine.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Rose.cs" />

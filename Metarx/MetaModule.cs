@@ -21,6 +21,7 @@ namespace Metarx
             Engine.RegisterProgram(inputs => new SampleProgram().Execute(inputs));
             Engine.RegisterProgram(inputs => new EntryPoint().Execute(inputs));
             Engine.RegisterProgram(inputs => new DevCombineLatest().Execute(inputs));
+            Engine.RegisterProgram(inputs => new DroneSample().Execute(inputs));
         }
 
         public async Task<object> GetValueFromStream(IObservable<object> stream)

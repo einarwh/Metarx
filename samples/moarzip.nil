@@ -1,0 +1,28 @@
+(define (execute stream)
+  (rx-zip 
+    (lambda (x y) (+ x ":" y)) 
+    (rx-select
+      (method get_Item2) 
+      (rx-where
+        (lambda (t) (= "quux" ((method get_Item1) t)))
+        stream))
+    (rx-select
+      (method get_Item2)
+      (rx-where
+        (lambda (t) (= "yak" ((method get_Item1) t)))
+        stream))
+    (rx-select
+      (method get_Item2)
+      (rx-where
+        (lambda (t) (= "lemming" ((method get_Item1) t)))
+        stream))
+    (rx-select
+      (method get_Item2)
+      (rx-where
+        (lambda (t) (= "llama" ((method get_Item1) t)))
+        stream))
+    (rx-select
+      (method get_Item2)
+      (rx-where
+        (lambda (t) (= "otter" ((method get_Item1) t)))
+        stream))))
