@@ -8,20 +8,6 @@ namespace Metarx.Core.Test
     public class BasicNihilTest : NihilTestBase
     {
         [TestMethod]
-        public void TestMethod1()
-        {
-            const string program = "(define (execute stream) ((lambda (x) (and #t)) 1))";
-            var results = Execute(program, new ArraySegment<Tuple<string, string>>());
-        }
-
-        [TestMethod]
-        public void TestMethod2()
-        {
-            const string program = "(define (execute stream) ((lambda (x) (if #t #t)) 1))";
-            var results = Execute(program, new ArraySegment<Tuple<string, string>>());
-        }
-
-        [TestMethod]
         public void TestMethod3()
         {
             var values = new[] { new Tuple<string, string>("foo", "bar") };

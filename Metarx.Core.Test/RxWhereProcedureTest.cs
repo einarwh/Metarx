@@ -37,7 +37,7 @@ namespace Metarx.Core.Test
             const string SingleQuoteProgram = "(define (execute stream) (rx-where (lambda (d) (and (not (invoke-static 'System.Double' 'IsNaN' d)) (> d 0.2))) (rx-select (lambda (s) (jdv-parse 'altitude' (invoke-instance s 'Substring' 2 (- ((method get_Length) s) 4)))) (rx-select (method get_Item2) (rx-where (lambda (t) (= 'navdata' ((method get_Item1) t))) stream)))))";
             var program = SingleQuoteProgram.Replace('\'', '"');
             var results = Execute(program, values);
-            Assert.AreEqual(2, results.Count());
+            Assert.AreEqual(3, results.Count());
         }
 
     }

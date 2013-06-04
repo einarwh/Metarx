@@ -1626,19 +1626,23 @@ namespace Metarx.Core
                 cellVarExp,
                 formalsExp);
 
-            // Call procedure (which involves evaluating tail call as well): 
+            // Call procedure 
             // proc.Evaluate(procScope);
-            var evalTailCallExp = Expression.Call(
-                Expression.Convert(Expression.Call(
+            var evalCallExp = Expression.Call(
                     Expression.Constant(proc),
                     typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate"),
-                    procScopeVarExp), typeof(TailCall)),
-                typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any()));
+                    procScopeVarExp)
+
+            // If tail call: convert and evaluate.
+            var resultExp = Expression.Condition(
+                Expression.Equal(Expression.Constant(typeof(TailCall)), Expression.Call(evalCallExp, typeof(object).GetMethods().First(m => m.Name == "GetType"))),
+                Expression.Call(Expression.Convert(evalCallExp, typeof(TailCall)), typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any())),
+                evalCallExp);
 
             var bodyExp = new BlockData(
                 new[] { procScopeVarExp, cellVarExp }, 
                 new List<Expression> { assignProcScopeExp, assignCellExp, assignBlockExp, callAddArgsExp }, 
-                evalTailCallExp);
+                resultExp);
 
             return bodyExp;
         }
