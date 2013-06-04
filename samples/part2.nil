@@ -1,0 +1,10 @@
+(define (execute stream)
+  (rx-select
+    (lambda (s) (jdv-parse "confidence" (invoke-instance s "Substring" 2 (- ((method get_Length) s) 4))))
+    (rx-where
+      (lambda (t) (> ((method get_Length) t) 4))
+      (rx-select
+        (method get_Item2) 
+        (rx-where
+          (lambda (t) (= "faces" ((method get_Item1) t)))
+          stream)))))

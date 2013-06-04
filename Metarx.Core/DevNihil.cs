@@ -1,10 +1,12 @@
 ﻿using System.Collections.Generic;
 using System.Collections;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reactive.Linq;
 using System;
+using System.Text.RegularExpressions;
 
 namespace Metarx.Core
 {
@@ -27,13 +29,14 @@ namespace Metarx.Core
             var callText = string.Format("({0} globalrxstream)", _procedureName);
             var callExp = reader.Read(callText, _env);
             var evaluator = new Evaluator { Environment = _env };
-            var evalResult = (AtomExpression)evaluator.Evaluate(callExp);
+            var resultExp = evaluator.Evaluate(callExp);
+            var evalResult = (AtomExpression)resultExp;
             var atom = evalResult.Atom;
             var obs = atom as IObservable<object>;
             return obs;
         } 
     }
-
+    
     public class Interpreter
     {
         private readonly IEnvironment _env;
@@ -231,6 +234,7 @@ namespace Metarx.Core
             {
                 if (_false == f.Evaluate(env, false)) return _false;
             }
+
             return _true;
         }
     }
@@ -591,10 +595,12 @@ namespace Metarx.Core
             {
                 return Compare((int)o1, (int)o2);
             }
+
             if ((o1 is double || o1 is int) && (o2 is double || o2 is int))
             {
-                return Compare((double)o1, (double)o2);
+                return Compare(Convert.ToDouble(o1), Convert.ToDouble(o2));
             }
+
             throw new ArgumentException(_procedureName + ": Invalid arguments of types: " + o1.GetType() + " and " + o2.GetType());
         }
 
@@ -1363,6 +1369,7 @@ namespace Metarx.Core
             env.Add("rx-where", new RxWhereProcedure(env));
             env.Add("rx-zip", new RxZipProcedure(env));
             env.Add("rx-combine-latest", new RxCombineLatestProcedure(env));
+            env.Add("jdv-parse", new JsonDoubleValueParserProcedure(env));
             return env;
         }
 
@@ -1836,16 +1843,20 @@ namespace Metarx.Core
         public IfForm(SExpression predicate, SExpression consequent, SExpression alternative, IEnvironment env)
         {
             _false = env.Symbols.False;
+            
             if (predicate == null)
             {
                 throw new ArgumentNullException("predicate");
             }
+
             if (consequent == null)
             {
                 throw new ArgumentNullException("consequent");
             }
+
             _predicate = predicate.Compile(env);
             _consequent = consequent.Compile(env);
+
             if (alternative != null)
             {
                 _alternative = alternative.Compile(env);
@@ -1855,10 +1866,12 @@ namespace Metarx.Core
         public override SExpression Evaluate(IScope env, bool isTail)
         {
             CompiledForm x = _predicate.Evaluate(env, false) == _false ? _alternative : _consequent;
+
             if (x == null)
             {
                 return _false;
             }
+            
             return x.Evaluate(env, isTail);
         }
 
@@ -2107,7 +2120,9 @@ namespace Metarx.Core
 
         protected override Type GetType(object atom)
         {
-            return Type.GetType((string)atom);
+            var typeName = (string)atom;
+            var result = Type.GetType(typeName);
+            return result;
         }
 
         protected override object GetInstance(object atom)
@@ -2657,9 +2672,6 @@ namespace Metarx.Core
             // SExpression -> LambdaForm (or Symbol???)
             _proc = proc.Compile(env);
 
-            var beforeType = proc.GetType();
-            var compiledType = _proc.GetType();
-
             if (operands == null)
             {
                 throw new ArgumentNullException("operands");
@@ -2933,19 +2945,19 @@ namespace Metarx.Core
             char c = atomText[0];
             if (c <= '9' && (c >= '0' || ((c == '+' || c == '-') && atomText.Length > 1)))
             {
-                try
+                if (atomText.Contains("."))
                 {
-                    return new LiteralExpression(int.Parse(atomText));
+                    double dval;
+                    if (double.TryParse(atomText, NumberStyles.Any, CultureInfo.InvariantCulture, out dval))
+                    {
+                        return new LiteralExpression(dval);
+                    }
                 }
-                catch (Exception)
+
+                int ival;
+                if (int.TryParse(atomText, NumberStyles.Any, CultureInfo.InvariantCulture, out ival))
                 {
-                }
-                try
-                {
-                    return new LiteralExpression(double.Parse(atomText));
-                }
-                catch (Exception)
-                {
+                    return new LiteralExpression(ival);
                 }
             }
 
@@ -3081,9 +3093,59 @@ namespace Metarx.Core
         }
     }
 
+    class JsonDoubleValueParserProcedure : NativeProcedure
+    {
+        class JsonDoubleValueParser
+        {
+            private readonly Regex _regex;
+
+            public JsonDoubleValueParser(string name)
+            {
+                var rex = name + @"\S:\s?((-?)\d+\.\d+)";
+                _regex = new Regex(rex);
+            }
+
+            public double Parse(string s)
+            {
+                var match = _regex.Match(s);
+                if (match.Success)
+                {
+                    double d;
+                    var result = double.TryParse(match.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out d) ? d : 0;
+                    return result;
+                }
+                return double.NaN;
+            }
+        }
+
+        public JsonDoubleValueParserProcedure(IEnvironment env)
+            : base(env)
+        {
+        }
+
+        public override SExpression Evaluate(IScope env)
+        {
+            var atom0 = ((AtomExpression)env.Get(0)).Atom;
+            var name = (string)atom0;
+
+            var atom1 = ((AtomExpression)env.Get(1)).Atom;
+            var input = (string)atom1;
+
+            var parser = new JsonDoubleValueParser(name);
+            var value = parser.Parse(input);
+
+            var result = new LiteralExpression(value);
+            return result;
+        }
+
+        public override SExpression CreateFormals(IEnvironment env)
+        {
+            return env.Symbols.XYArgs;
+        }
+    }
+
     class StringProcedure : NativeProcedure
     {
-
         public StringProcedure(IEnvironment env) : base(env) { }
 
         public override SExpression CreateFormals(IEnvironment env)
@@ -3165,7 +3227,6 @@ namespace Metarx.Core
 
     public class Symbol : SExpression
     {
-
         private readonly string _name;
 
         public Symbol(string name)
@@ -3182,7 +3243,6 @@ namespace Metarx.Core
         {
             return env.Lookup(this);
         }
-
     }
 
     class SymbolCheckProcedure : NativeProcedure

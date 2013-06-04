@@ -1,0 +1,4 @@
+(define (execute stream)
+  (rx-select
+    (lambda (x) (and (= 1 1)))
+    stream)
