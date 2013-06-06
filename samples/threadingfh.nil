@@ -4,11 +4,10 @@
     (->> stream
          (rx-where (lambda (t) (= "faces" ((method get_Item1) t))))
          (rx-select (method get_Item2))
-         (rx-where (lambda (t) (> ((method get_Length) t) 4)))
-         (rx-select (lambda (s) (jdv-parse "confidence" (invoke-instance s "Substring" 2 (- ((method get_Length) s) 4)))))
+         (rx-select (lambda (s) (jdv-parse "confidence" s)))
          (rx-where (lambda (c) (> c 1.0))))
     (->> stream
          (rx-where (lambda (t) (= "navdata" ((method get_Item1) t))))
          (rx-select (method get_Item2))
-         (rx-select (lambda (s) (jdv-parse "altitude" (invoke-instance s "Substring" 2 (- ((method get_Length) s) 4)))))
-         (rx-where (lambda (d) (and (not (invoke-static "System.Double" "IsNaN" d)) (> d 0.2)))))))
+         (rx-select (lambda (s) (jdv-parse "altitudeMeters" s)))
+         (rx-where (lambda (d) (> d 0.2))))))

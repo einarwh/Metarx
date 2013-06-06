@@ -25,11 +25,13 @@ namespace Metarx.Core
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
         {
             var reader = new Reader();
+            //var consStream = stream.Select(t => new ConsCellImpl(new LiteralExpression(t.Item1), new LiteralExpression(t.Item2)));
             _env.Add("globalrxstream", new LiteralExpression(stream));
             var callText = string.Format("({0} globalrxstream)", _procedureName);
             var callExp = reader.Read(callText, _env);
             var evaluator = new Evaluator { Environment = _env };
-            var evalResult = (AtomExpression)evaluator.Evaluate(callExp);
+            var resultExp = evaluator.Evaluate(callExp);
+            var evalResult = (AtomExpression)resultExp;
             var atom = evalResult.Atom;
             var obs = atom as IObservable<object>;
             return obs;
@@ -233,6 +235,7 @@ namespace Metarx.Core
             {
                 if (_false == f.Evaluate(env, false)) return _false;
             }
+
             return _true;
         }
     }
@@ -593,10 +596,12 @@ namespace Metarx.Core
             {
                 return Compare((int)o1, (int)o2);
             }
+
             if ((o1 is double || o1 is int) && (o2 is double || o2 is int))
             {
-                return Compare((double)o1, (double)o2);
+                return Compare(Convert.ToDouble(o1), Convert.ToDouble(o2));
             }
+
             throw new ArgumentException(_procedureName + ": Invalid arguments of types: " + o1.GetType() + " and " + o2.GetType());
         }
 
@@ -1365,6 +1370,7 @@ namespace Metarx.Core
             env.Add("rx-where", new RxWhereProcedure(env));
             env.Add("rx-zip", new RxZipProcedure(env));
             env.Add("rx-combine-latest", new RxCombineLatestProcedure(env));
+            env.Add("jdv-parse", new JsonDoubleValueParserProcedure(env));
             return env;
         }
 
@@ -1629,15 +1635,20 @@ namespace Metarx.Core
             // Call procedure 
             // proc.Evaluate(procScope);
             var evalCallExp = Expression.Call(
-                    Expression.Constant(proc),
-                    typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate"),
-                    procScopeVarExp)
+                Expression.Constant(proc),
+                typeof(Procedure).GetMethods().First(m => m.Name == "Evaluate"),
+                procScopeVarExp);
 
             // If tail call: convert and evaluate.
-            var resultExp = Expression.Condition(
-                Expression.Equal(Expression.Constant(typeof(TailCall)), Expression.Call(evalCallExp, typeof(object).GetMethods().First(m => m.Name == "GetType"))),
-                Expression.Call(Expression.Convert(evalCallExp, typeof(TailCall)), typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any())),
-                evalCallExp);
+            var resultExp =
+                Expression.Condition(
+                    Expression.Equal(
+                        Expression.Constant(typeof(TailCall)),
+                        Expression.Call(evalCallExp, typeof(object).GetMethods().First(m => m.Name == "GetType"))),
+                    Expression.Call(
+                        Expression.Convert(evalCallExp, typeof(TailCall)),
+                        typeof(TailCall).GetMethods().First(m => m.Name == "Evaluate" && !m.GetParameters().Any())),
+                    evalCallExp);
 
             var bodyExp = new BlockData(
                 new[] { procScopeVarExp, cellVarExp }, 
@@ -1842,16 +1853,20 @@ namespace Metarx.Core
         public IfForm(SExpression predicate, SExpression consequent, SExpression alternative, IEnvironment env)
         {
             _false = env.Symbols.False;
+            
             if (predicate == null)
             {
                 throw new ArgumentNullException("predicate");
             }
+
             if (consequent == null)
             {
                 throw new ArgumentNullException("consequent");
             }
+
             _predicate = predicate.Compile(env);
             _consequent = consequent.Compile(env);
+
             if (alternative != null)
             {
                 _alternative = alternative.Compile(env);
@@ -1861,10 +1876,12 @@ namespace Metarx.Core
         public override SExpression Evaluate(IScope env, bool isTail)
         {
             CompiledForm x = _predicate.Evaluate(env, false) == _false ? _alternative : _consequent;
+
             if (x == null)
             {
                 return _false;
             }
+            
             return x.Evaluate(env, isTail);
         }
 
@@ -2113,7 +2130,9 @@ namespace Metarx.Core
 
         protected override Type GetType(object atom)
         {
-            return Type.GetType((string)atom);
+            var typeName = (string)atom;
+            var result = Type.GetType(typeName);
+            return result;
         }
 
         protected override object GetInstance(object atom)
@@ -2663,9 +2682,6 @@ namespace Metarx.Core
             // SExpression -> LambdaForm (or Symbol???)
             _proc = proc.Compile(env);
 
-            var beforeType = proc.GetType();
-            var compiledType = _proc.GetType();
-
             if (operands == null)
             {
                 throw new ArgumentNullException("operands");
@@ -2939,19 +2955,19 @@ namespace Metarx.Core
             char c = atomText[0];
             if (c <= '9' && (c >= '0' || ((c == '+' || c == '-') && atomText.Length > 1)))
             {
-                try
+                if (atomText.Contains("."))
                 {
-                    return new LiteralExpression(int.Parse(atomText));
+                    double dval;
+                    if (double.TryParse(atomText, NumberStyles.Any, CultureInfo.InvariantCulture, out dval))
+                    {
+                        return new LiteralExpression(dval);
+                    }
                 }
-                catch (Exception)
+
+                int ival;
+                if (int.TryParse(atomText, NumberStyles.Any, CultureInfo.InvariantCulture, out ival))
                 {
-                }
-                try
-                {
-                    return new LiteralExpression(double.Parse(atomText));
-                }
-                catch (Exception)
-                {
+                    return new LiteralExpression(ival);
                 }
             }
 
@@ -3221,7 +3237,6 @@ namespace Metarx.Core
 
     public class Symbol : SExpression
     {
-
         private readonly string _name;
 
         public Symbol(string name)
@@ -3238,7 +3253,6 @@ namespace Metarx.Core
         {
             return env.Lookup(this);
         }
-
     }
 
     class SymbolCheckProcedure : NativeProcedure

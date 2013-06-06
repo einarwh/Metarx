@@ -2,13 +2,13 @@
   (rx-combine-latest
     (lambda (c h) "Found a face at the right height")
     (->> stream
-         (rx-where (lambda (t) (= "faces" ((method get_Item1) t))))
-         (rx-select (method get_Item2))
+         (rx-where (lambda (t) (= "faces" (car t))))
+         (rx-select (lambda (t) (cdr t)))
          (rx-where (lambda (t) (> ((method get_Length) t) 4)))
          (rx-select (lambda (s) (jdv-parse "confidence" s)))
          (rx-where (lambda (c) (> c 1.0))))
     (->> stream
-         (rx-where (lambda (t) (= "navdata" ((method get_Item1) t))))
-         (rx-select (method get_Item2))
-         (rx-select (lambda (s) (jdv-parse "altitudeMeters" s)))
+         (rx-where (lambda (t) (= "navdata" (car t))))
+         (rx-select (lambda (t) (cdr t)))
+         (rx-select (lambda (s) (jdv-parse "altitude" s)))
          (rx-where (lambda (d) (and (not (invoke-static "System.Double" "IsNaN" d)) (> d 0.2)))))))

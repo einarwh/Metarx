@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Reactive.Linq;
 using System.Text.RegularExpressions;
 
-namespace Metarx.Core
+namespace DroneDemo
 {
     public class JsonDoubleValueParser
     {
@@ -36,24 +36,14 @@ namespace Metarx.Core
             var faces =
                 stream.Where(t => t.Item1 == "faces")
                       .Select(t => t.Item2)
-                      .Where(s => s.Length > 4)
-                      .Select(s => s.Substring(2, s.Length - 4))
-                      .Select(s =>
-                          { 
-                              var res = confidenceParser.Parse(s);
-                              return res;
-                          });
+                      .Select(confidenceParser.Parse);
 
-            var altitudeParser = new JsonDoubleValueParser("altitude");
+            var altitudeParser = new JsonDoubleValueParser("altitudeMeters");
             var height = stream
                 .Where(t => t.Item1 == "navdata")
                 .Select(t => t.Item2)
                 .Select(altitudeParser.Parse)
-                .Where(d =>
-                    { 
-                        var result = !double.IsNaN(d) && d > 0.2;
-                        return result;
-                    });
+                .Where(d => d > 0.2);
 
             return faces
                 .Where(c => c > 1.0)

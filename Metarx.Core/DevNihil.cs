@@ -25,6 +25,7 @@ namespace Metarx.Core
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
         {
             var reader = new Reader();
+            //var consStream = stream.Select(t => new ConsCellImpl(new LiteralExpression(t.Item1), new LiteralExpression(t.Item2)));
             _env.Add("globalrxstream", new LiteralExpression(stream));
             var callText = string.Format("({0} globalrxstream)", _procedureName);
             var callExp = reader.Read(callText, _env);
