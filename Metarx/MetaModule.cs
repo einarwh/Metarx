@@ -24,13 +24,37 @@ namespace Metarx
             Engine.RegisterProgram(inputs => new DroneSample().Execute(inputs));
         }
 
-        public async Task<object> GetValueFromStream(IObservable<object> stream)
-        {
-            return await stream.FirstOrDefaultAsync();
-        }
-
         public MetaModule()
         {
+            Func<string, string, Response> postHandler = (pid, name) =>
+                {
+                    int id = Int32.Parse(pid);
+                    var len = (int)Request.Body.Length;
+
+                    if (Request.Body.Length > MAX_REQUEST_BODY_LENGTH)
+                    {
+                        return new Response { StatusCode = HttpStatusCode.BadRequest };
+                    }
+
+                    var buf = new byte[Request.Body.Length];
+
+                    Request.Body.Read(buf, 0, len);
+
+                    var data = Encoding.UTF8.GetString(buf);
+
+                    var tuple = new Tuple<int, string, string>(id, name, data);
+
+                    var mis = Engine.MainInputStream;
+                    mis.OnNext(tuple);
+
+                    var res = new Response
+                    {
+                        StatusCode = HttpStatusCode.OK
+                    };
+
+                    return res;
+                };
+
             Get["/programs/{id}"] = ps =>
                 {
                     int id = Int32.Parse(ps.id);
@@ -69,67 +93,15 @@ namespace Metarx
                     return r;
                 };
 
-            Post["/programs/{id}/{name}"] = ps =>
-            {
-                int id = Int32.Parse(ps.id);
-                string name = ps.name;
+            Post["/programs/{id}/{name}"] = ps => postHandler(ps.id, ps.name);
 
-                int len = (int)Request.Body.Length;
+            Post["/programs/{id}"] = ps => postHandler(ps.id, "<default>");
 
-                if (Request.Body.Length > MAX_REQUEST_BODY_LENGTH)
+            Post["/clear"] = ps =>
                 {
-                    return new Response { StatusCode = HttpStatusCode.BadRequest };
-                }
-
-                var buf = new byte[Request.Body.Length];
-
-                Request.Body.Read(buf, 0, len);
-
-                var data = Encoding.UTF8.GetString(buf);
-
-                var tuple = new Tuple<int, string, string>(id, name, data);
-
-                var mis = Engine.MainInputStream;
-                mis.OnNext(tuple);
-
-                var res = new Response
-                {
-                    StatusCode = HttpStatusCode.OK
+                    Engine.Clear();
+                    return new Response { StatusCode = HttpStatusCode.OK };
                 };
-
-                return res;
-            };
-
-            Post["/programs/{id}"] = ps =>
-            {
-                int id = Int32.Parse(ps.id);
-                string name = "<default>";
-
-                int len = (int)Request.Body.Length;
-
-                if (Request.Body.Length > MAX_REQUEST_BODY_LENGTH)
-                {
-                    return new Response { StatusCode = HttpStatusCode.BadRequest };
-                }
-
-                var buf = new byte[Request.Body.Length];
-
-                Request.Body.Read(buf, 0, len);
-
-                var data = Encoding.UTF8.GetString(buf);
-
-                var tuple = new Tuple<int, string, string>(id, name, data);
-
-                var mis = Engine.MainInputStream;
-                mis.OnNext(tuple);
-
-                var res = new Response
-                {
-                    StatusCode = HttpStatusCode.OK
-                };
-
-                return res;
-            };
         }
 
         private static bool IsExecutable(object it)

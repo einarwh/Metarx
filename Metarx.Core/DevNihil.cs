@@ -582,7 +582,8 @@ namespace Metarx.Core
         {
             object o1 = ((AtomExpression)env.Get(0)).Atom;
             object o2 = ((AtomExpression)env.Get(1)).Atom;
-            return Compare(o1, o2) ? _true : _false;
+            var result = Compare(o1, o2) ? _true : _false;
+            return result;
         }
 
         public override SExpression CreateFormals(IEnvironment env)
@@ -2876,6 +2877,7 @@ namespace Metarx.Core
             {
                 cell = (stack.Pop()).Cons(cell);
             }
+
             return cell;
         }
 
@@ -3105,6 +3107,7 @@ namespace Metarx.Core
 
     class JsonDoubleValueParserProcedure : NativeProcedure
     {
+
         class JsonDoubleValueParser
         {
             private readonly Regex _regex;

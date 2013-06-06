@@ -64,5 +64,13 @@ namespace Metarx.Core
             ResultMap[id] = q;
             return id;
         }
+
+        public static void Clear()
+        {
+            foreach (var q in ResultMap.Values)
+            {
+                q.Clear();
+            }
+        }
     }
 }
