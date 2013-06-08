@@ -17,6 +17,7 @@ The simple face detection program is hosted at the url http://localhost:50935/pr
 We can publish data to it by issuing POST requests using curl:
 
 curl -XPOST http://localhost:50935/programs/4/faces -d @confidencedata.json
+
 curl -XPOST http://localhost:50935/programs/4/navdata -d @altitudedata.json
 
 If the program has produced any output data, we can consume it by issuing GET requests:
@@ -31,7 +32,7 @@ The face detection program isn't terribly versatile, in the sense that it is cum
 
 However, we have more interesting programs hosted, like Rosie. Rosie uses Roslyn to compile submitted programs on the fly, and host them at urls of their own. In effect, it produces an IObservable of .NET programs from an IObservable of source code strings. 
 
-In practice, a program submitted to Rosie should have the following behaviour: when executed, it should produce a new IObservable that accepts input and output over HTTP, at a url set up by Nancy. In terms of Rx, we submit programs that act as a select on the posted data.
+In practice, a program submitted to Rosie should have the following behaviour: when executed, it should produce a new IObservable that accepts input and output over HTTP, at a url set up by Nancy. In terms of Rx, we submit programs that act as a Select on the posted data.
 
 Rosie is program 0. We can submit programs to Rosie like this:
 
