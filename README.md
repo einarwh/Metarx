@@ -1,7 +1,7 @@
-Reactive metaprogramming over HTTP. For NDC 2013. 
-http://ndcoslo.oktaset.com/t-8118
+# Reactive metaprogramming over HTTP
 
-# Programs over HTTP
+For NDC 2013. http://ndcoslo.oktaset.com/t-8118
+
 
 ## The basic idea
 
