@@ -66,6 +66,6 @@ The threadingfh.nil file is assumed to contain a program that Nihil will underst
 
 
 
-## Whole lotta Rosie - Compilers all the way down
+## Compilers all the way down
 
 The astute observer might notice that Rosie is a .NET type that implements an Execute method that takes an IObservable as parameter and returns an IObservable as output. This means that you could very easily submit the source code for Rosie to Rosie. What you get is a new manifestation of Rosie hosted at a new url. And you could keep on doing so for as long as you'd like.
