@@ -9,7 +9,7 @@ We host programs at urls using Nancy. We can interact with those programs by sub
 
 A program is simply an IObservable. Input data are accepted by means of POST requests. Output data can be read by means of GET requests.
 
-![A program](https://raw.github.com/einarwh/Metarx/master/images/20130606_174019.jpg)
+![A program](https://raw.github.com/einarwh/Metarx/master/images/program-io.jpg)
 
 ## Program as a web service
 
