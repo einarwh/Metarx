@@ -66,7 +66,7 @@ curl -XPOST http://localhost:50935/programs/6 -d @threadingfh.nil
 The threadingfh.nil file is assumed to contain a program that Nihil will understand - in this case we can imagine a Nihil program that does the same thing as facedetection.cs using the threading macro syntax of that particular programming language.
 
 
-![A program](https://raw.github.com/einarwh/Metarx/master/images/20130606_214924.jpg)
+![A program](https://raw.github.com/einarwh/Metarx/master/images/compiler-service.jpg)
 
 
 ## Compilers all the way down
@@ -74,4 +74,4 @@ The threadingfh.nil file is assumed to contain a program that Nihil will underst
 The astute observer might notice that Rosie is a .NET type that implements an Execute method that takes an IObservable as parameter and returns an IObservable as output. This means that you could very easily submit the source code for Rosie to Rosie. What you get is a new manifestation of Rosie hosted at a new url. And you could keep on doing so for as long as you'd like.
 
 
-![A program](https://raw.github.com/einarwh/Metarx/master/images/20130606_221017.jpg)
+![A program](https://raw.github.com/einarwh/Metarx/master/images/recursive-rosie.jpg)
