@@ -1,0 +1,11 @@
+Rx notes:
+
+What are the highlights of Rx?
+
+Unified programming model for sequences of data that are produced over time. Linq to events, if you like - where events are taken as a general concept, not the .NET implementation. Higher order functions like map (Select) and filter (Where) to act on those sequences. The core interfaces are IObservable (which represents the sequence of data) and IObserver (which represents some entity that is interested in the data).
+
+Rx implementations:
+
+Rx for .NET (the original)
+RxJS
+RxJava (by Netflix)
