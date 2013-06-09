@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace Metarx.Core
 {
-    public class JsonDoubleValueParser
+    class JsonDoubleValueParser
     {
         private readonly Regex _regex;
 
@@ -24,6 +24,7 @@ namespace Metarx.Core
                 var result = double.TryParse(match.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out d) ? d : 0;
                 return result;
             }
+
             return double.NaN;
         }
     }
@@ -36,7 +37,8 @@ namespace Metarx.Core
             var faces =
                 stream.Where(t => t.Item1 == "faces")
                       .Select(t => t.Item2)
-                      .Select(confidenceParser.Parse);
+                      .Select(confidenceParser.Parse)
+                      .Where(c => c > 1.0);
 
             var altitudeParser = new JsonDoubleValueParser("altitudeMeters");
             var height = stream
@@ -46,7 +48,6 @@ namespace Metarx.Core
                 .Where(d => d > 0.2);
 
             return faces
-                .Where(c => c > 1.0)
                 .CombineLatest(height, (f, h) => "Conf: " + f + " && " + h);
         }
     }

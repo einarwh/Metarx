@@ -35,7 +35,9 @@ namespace Metarx.Core
 
         public static IObservable<Tuple<string, string>> GetProgramInputStream(int id)
         {
-            return _input.Where(t => t.Item1 == id).Select(t => new Tuple<string, string>(t.Item2, t.Item3));
+            return _input
+                .Where(t => t.Item1 == id)
+                .Select(t => new Tuple<string, string>(t.Item2, t.Item3));
         }
 
         private Engine()
