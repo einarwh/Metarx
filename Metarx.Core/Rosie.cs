@@ -14,12 +14,9 @@ namespace Metarx.Core
     {
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
         {
-            return stream.Select(t => Rose.CreateProgram(t.Item2));
+            return stream.Select(t => CreateProgram(t.Item2));
         }
-    }
 
-    public static class Rose
-    {
         public static Assembly Compile(string source)
         {
             var tree = SyntaxTree.ParseText(source);
