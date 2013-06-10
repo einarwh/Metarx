@@ -1,0 +1,1 @@
+phantomjs run-jscover-qunit.js http://localhost:8182/main-fixture.html

@@ -43,10 +43,10 @@ namespace DroneDemo
                 .Where(t => t.Item1 == "navdata")
                 .Select(t => t.Item2)
                 .Select(altitudeParser.Parse)
-                .Where(d => d > 0.2);
+                .Where(d => d > 0.3);
 
             return faces
-                .Where(c => c > 1.0)
+                .Where(c => c > 1.4)
                 .CombineLatest(height, (f, h) => "Conf: " + f + " && " + h);
         }
     }

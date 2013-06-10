@@ -48,7 +48,7 @@ namespace Metarx.Core
         {
             var evaluator = new Evaluator();
             var reader = new Reader();
-            foreach (string lispThing in EntryPoint.GetBasicLispThings())
+            foreach (string lispThing in NihilEntryPoint.GetBasicLispThings())
             {
                 evaluator.Evaluate(reader.Read(lispThing, evaluator.Environment));
             }
@@ -73,7 +73,7 @@ namespace Metarx.Core
         }
     }
 
-    public class EntryPoint
+    public class NihilEntryPoint
     {
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
         {

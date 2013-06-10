@@ -7,7 +7,7 @@ namespace Metarx.Core
 {
     public class Engine
     {
-        private const int MAX_QUEUED_VALUES = 20;
+        private const int MaxQueuedValues = 20;
 
         private static int _counter = 0;
 
@@ -56,7 +56,7 @@ namespace Metarx.Core
             var q = new Queue<object>();
             execute(GetProgramInputStream(id)).Subscribe(obj =>
                 {
-                    if (q.Count >= MAX_QUEUED_VALUES)
+                    if (q.Count >= MaxQueuedValues)
                     {
                         q.Dequeue();
                     }

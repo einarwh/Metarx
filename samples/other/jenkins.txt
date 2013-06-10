@@ -1,0 +1,7 @@
+mkdir -p buildable/application/liferay/javascript/reports/
+
+jshint --checkstyle-reporter buildable/application/liferay/javascript > buildable/application/liferay/javascript/reports/checkstyle-jshint.xml || exit 0
+
+jshint --jslint-reporter buildable/application/liferay/javascript > buildable/application/liferay/javascript/reports/jslint.xml || exit 0
+
+./buildable/application/liferay/javascript/tests/jscover/run-jscover-transform.sh

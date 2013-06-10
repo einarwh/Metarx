@@ -1,2 +1,0 @@
-(->> (stream1 stream2 stream3 stream4) 
-     ((select (lambda (a) (...))) (zip (lambda (a b) (...))) (select (lambda (a) (...)))))

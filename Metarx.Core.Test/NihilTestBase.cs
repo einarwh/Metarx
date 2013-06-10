@@ -10,7 +10,7 @@ namespace Metarx.Core.Test
         {
             var evaluator = new Evaluator();
             var reader = new Reader();
-            foreach (string lispThing in EntryPoint.GetBasicLispThings())
+            foreach (string lispThing in NihilEntryPoint.GetBasicLispThings())
             {
                 evaluator.Evaluate(reader.Read(lispThing, evaluator.Environment));
             }

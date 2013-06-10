@@ -7,9 +7,10 @@ namespace Metarx.Core
     {
         public IObservable<object> Execute(IObservable<Tuple<string, string>> stream)
         {
-            var foo = stream.Where(t => t.Item1 == "foo").Select(t => t.Item2);
-            var bar = stream.Where(t => t.Item1 == "bar").Select(t => t.Item2);
-            var zipped = foo.Zip(bar, (f, b) => f + ":" + b);
+            var first = stream.Where(t => t.Item1 == "firstname").Select(t => t.Item2);
+            var last = stream.Where(t => t.Item1 == "lastname").Select(t => t.Item2);
+            
+            var zipped = first.Zip(last, (f, b) => f + " " + b);
             return zipped;
         }
     }

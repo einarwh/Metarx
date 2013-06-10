@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Linq;
-using System.Reactive.Linq;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 using Metarx.Core;
 
@@ -13,13 +11,13 @@ namespace Metarx
 {
     public class MetaModule : NancyModule
     {
-        const int MAX_REQUEST_BODY_LENGTH = 1000000;
+        const int MaxRequestBodyLength = 1000000;
 
         static MetaModule()
         {
             Engine.RegisterProgram(inputs => new Rosie().Execute(inputs));
             Engine.RegisterProgram(inputs => new SampleProgram().Execute(inputs));
-            Engine.RegisterProgram(inputs => new EntryPoint().Execute(inputs));
+            Engine.RegisterProgram(inputs => new NihilEntryPoint().Execute(inputs));
             Engine.RegisterProgram(inputs => new DevCombineLatest().Execute(inputs));
             Engine.RegisterProgram(inputs => new DroneSample().Execute(inputs));
         }
@@ -31,7 +29,7 @@ namespace Metarx
                     int id = Int32.Parse(pid);
                     var len = (int)Request.Body.Length;
 
-                    if (Request.Body.Length > MAX_REQUEST_BODY_LENGTH)
+                    if (Request.Body.Length > MaxRequestBodyLength)
                     {
                         return new Response { StatusCode = HttpStatusCode.BadRequest };
                     }
