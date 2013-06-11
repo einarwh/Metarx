@@ -69,6 +69,7 @@ namespace Metarx.Core
 
         public static void Clear()
         {
+            _input.Subscribe(it => { });
             foreach (var q in ResultMap.Values)
             {
                 q.Clear();
